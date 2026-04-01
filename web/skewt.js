@@ -132,7 +132,6 @@ function draw_skewt_lines(chart, x, y, temps, pressures_pa, color)
             .attr("fill", "none")
             .attr("stroke", color)
             .attr("stroke-width", 1)
-            .attr("stroke-dasharray", "4,2")
             .attr("d", line_gen);
     });
 }
@@ -164,13 +163,13 @@ function draw_skewt()
     if (bg_data)
     {
         if (document.getElementById("show_isotherms").checked)
-            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, "rgba(179,179,179,0.7)");
+            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, "rgba(179,179,179,0.5)");
         if (document.getElementById("show_isohumes").checked)
-            draw_skewt_lines(chart, x, y, bg_data.isohumes,       bg_data.p_isohumes,  "rgba(31,119,180,0.7)");
+            draw_skewt_lines(chart, x, y, bg_data.isohumes,       bg_data.p_isohumes,  "rgba(31,119,180,0.5)");
         if (document.getElementById("show_dry_adiabats").checked)
-            draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       "rgba(214,39,40,0.7)");
+            draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       "rgba(214,39,40,0.5)");
         if (document.getElementById("show_moist_adiabats").checked)
-            draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     "rgba(13,145,70,0.7)");
+            draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     "rgba(13,145,70,0.5)");
     }
 
     if (model_sounding)
