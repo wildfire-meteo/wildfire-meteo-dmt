@@ -355,6 +355,13 @@ function draw_skewt()
     }
 }
 
+function set_obs_sounding(data)
+{
+    obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
+    document.getElementById("remove_sounding_btn").style.display = "";
+    draw_skewt();
+}
+
 document.getElementById("sounding_upload").addEventListener("change", (e) =>
 {
     const file = e.target.files[0];
@@ -365,13 +372,22 @@ document.getElementById("sounding_upload").addEventListener("change", (e) =>
 
     fetch("/api/upload_sounding", { method: "POST", body: form_data })
         .then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail); }); return r.json(); })
-        .then(data =>
-        {
-            obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
-            draw_skewt();
-        })
+        .then(data => set_obs_sounding(data))
         .catch(err => alert("Upload failed: " + err.message));
-    document.getElementById("remove_sounding_btn").style.display = "";
+});
+
+document.getElementById("fetch_sounding_btn").addEventListener("click", () =>
+{
+    const station = document.getElementById("station_select").value;
+    const date    = document.getElementById("date_input").value;
+    const hour    = document.getElementById("sounding_time_select").value;
+
+    if (!station || !date) return;
+
+    fetch(`/api/radiosonde_sounding?station=${station}&date=${date}&hour=${hour}`)
+        .then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail); }); return r.json(); })
+        .then(data => set_obs_sounding(data))
+        .catch(err => alert("Failed to fetch sounding. " + err.message));
 });
 
 document.getElementById("remove_sounding_btn").addEventListener("click", () =>

@@ -25,12 +25,13 @@ from fastapi.staticfiles import StaticFiles
 import pandas as pd
 from .skewT import get_static_lines
 from .open_meteo import get_model_sounding
-from .soundings import read_wfdp_sounding
+from .soundings import read_wfdp_sounding, load_sounding_stations, get_nearest_soundings, station_distance_bearing, fetch_wyoming_sounding
 
 app = FastAPI()
 
-# Cache at startup — background lines never change.
-_lines = get_static_lines(ktot=200)
+# Cache at startup — these never change at runtime.
+_lines    = get_static_lines(ktot=200)
+_stations = load_sounding_stations()
 
 
 @app.get("/api/background")
@@ -75,6 +76,38 @@ def model_sounding(
         "ql":     ds["ql"].values.tolist(),
         "theta":  ds["theta"].values.tolist(),
         "thetav": ds["thetav"].values.tolist(),
+    }
+
+
+@app.get("/api/nearest_stations")
+def nearest_stations(lat: float = Query(...), lon: float = Query(...)):
+    nearest = get_nearest_soundings(_stations, lat, lon, n=5)
+    result = []
+    for i in range(len(nearest.station)):
+        station = nearest.isel(station=i)
+        dist_km, direction = station_distance_bearing(station, lat, lon)
+        result.append({
+            "name":      station["name"].item(),
+            "code":      station["code"].item(),
+            "dist_km":   round(dist_km),
+            "direction": direction,
+        })
+    return result
+
+
+@app.get("/api/radiosonde_sounding")
+def radiosonde_sounding(station: str = Query(...), date: str = Query(...), hour: int = Query(12)):
+    try:
+        dt = pd.Timestamp(f"{date}") + pd.Timedelta(hours=hour)
+        df = fetch_wyoming_sounding(station, dt)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Selected date/time might not be available.")
+
+    return {
+        "p_hpa": (df["pressure"] / 100).tolist(),
+        "T":     df["temperature"].tolist(),
+        "Td":    df["Td"].tolist(),
+        "time":  dt.strftime("%H:%M"),
     }
 
 

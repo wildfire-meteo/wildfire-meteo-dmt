@@ -1,4 +1,5 @@
 import io
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -50,7 +51,7 @@ def load_sounding_stations(min_end_year=2025):
 
     cols = ['id', 'lat', 'lon', 'elev', 'name', 'start_year', 'end_year', 'nobs']
     df = pd.read_fwf(
-        'resources/igra2-station-list.txt',
+        Path(__file__).parent / 'resources' / 'igra2-station-list.txt',
         header=None,
         names=cols,
         colspecs=[(0, 11), (12, 20), (21, 30), (31, 37), (38, 71), (72, 76), (77, 81), (82, 88)],

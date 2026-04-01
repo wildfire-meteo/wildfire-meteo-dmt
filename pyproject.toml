@@ -18,5 +18,8 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["api*"]
 
+[tool.setuptools.package-data]
+api = ["resources/*.txt"]
+
 [tool.fastapi]
 entrypoint = "api.main:app"

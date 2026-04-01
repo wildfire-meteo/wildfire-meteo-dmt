@@ -116,32 +116,40 @@
                 </details>
 
                 <details class="section">
-                    <summary><span class="material-icons">sensors</span> Radiosonde</summary>
-                    <div class="section-body">
-                        <label>
-                            Nearest station
-                            <select id="station_select" disabled>
-                                <option value="">— select location first —</option>
-                            </select>
-                        </label>
-                        <button disabled>
-                            <span class="material-icons">download</span> Fetch sounding
-                        </button>
-                    </div>
-                </details>
-
-                <details class="section">
-                    <summary><span class="material-icons">upload_file</span> Upload sounding</summary>
+                    <summary><span class="material-icons">upload_file</span> Upload <a href="https://wildfiredataportal.eu/" target="_blank" class="theme-link">WFDP</a> sounding</summary>
                     <div class="section-body">
                         <label>
                             Sounding file
                             <input type="file" id="sounding_upload" accept=".csv">
                         </label>
-                        <button id="remove_sounding_btn" style="display:none">
-                            <span class="material-icons">delete</span> Remove sounding
+                    </div>
+                </details>
+
+                <details class="section">
+                    <summary><span class="material-icons">sensors</span> Radiosonde</summary>
+                    <div class="section-body">
+                        <label>
+                            Nearest stations
+                            <select id="station_select" disabled>
+                                <option value="">— set location first —</option>
+                            </select>
+                        </label>
+                        <label>
+                            Time
+                            <select id="sounding_time_select">
+                                <option value="0">00:00 UTC</option>
+                                <option value="12" selected>12:00 UTC</option>
+                            </select>
+                        </label>
+                        <button id="fetch_sounding_btn" disabled>
+                            <span class="material-icons">download</span> Fetch sounding
                         </button>
                     </div>
                 </details>
+
+                <button id="remove_sounding_btn" style="display:none">
+                    <span class="material-icons">delete</span> Remove sounding
+                </button>
 
                 <details class="section">
                     <summary><span class="material-icons">image</span> Plot</summary>
