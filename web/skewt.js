@@ -108,6 +108,7 @@ document.getElementById("show_isotherms").addEventListener("change", draw_skewt)
 document.getElementById("show_isohumes").addEventListener("change", draw_skewt);
 document.getElementById("show_dry_adiabats").addEventListener("change", draw_skewt);
 document.getElementById("show_moist_adiabats").addEventListener("change", draw_skewt);
+document.getElementById("edit_mode").addEventListener("change", draw_skewt);
 
 function draw_skewt_lines(chart, x, y, temps, pressures_pa, color)
 {
@@ -239,16 +240,17 @@ function draw_skewt()
                     draw_skewt();
                 });
 
-            chart.selectAll(null).data(pts).enter()
-                .append("circle")
-                .attr("cx", d => x(d[0]))
-                .attr("cy", d => y(d[1]))
-                .attr("r", 5)
-                .attr("fill", "white")
-                .attr("stroke", color)
-                .attr("stroke-width", 2)
-                .style("cursor", "grab")
-                .call(drag);
+            if (document.getElementById("edit_mode").checked)
+                chart.selectAll(null).data(pts).enter()
+                    .append("circle")
+                    .attr("cx", d => x(d[0]))
+                    .attr("cy", d => y(d[1]))
+                    .attr("r", 5)
+                    .attr("fill", "white")
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2)
+                    .style("cursor", "grab")
+                    .call(drag);
         }
 
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T);
