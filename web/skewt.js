@@ -26,6 +26,7 @@ let model_sounding = null;
 let obs_sounding = null;
 let model_forecast = null;
 let current_time = 0;
+let parcel_starts = null;
 
 const color_T   = "#EB0056";
 const color_Td  = "#0056EB";
@@ -80,6 +81,12 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             T:     data.T[current_time],
             Td:    data.Td[current_time],
         };
+
+        const sfc_idx = data.p_hpa.indexOf(Math.max(...data.p_hpa));
+        parcel_starts = data.T.map((T_arr, ti) => ({
+            T:  T_arr[sfc_idx],
+            Td: data.Td[ti][sfc_idx],
+        }));
 
         document.getElementById("launch_parcel").disabled = false;
         draw_skewt();
@@ -183,10 +190,9 @@ function draw_skewt()
 
             const p_pa = model_sounding.p_hpa.map(p => p * 100);
             const p_pa_desc = [...p_pa].sort((a, b) => b - a);
-            const sfc_idx = p_pa.indexOf(p_pa_desc[0]);
             const parcel = calc_non_entraining_parcel(
-                model_sounding.T[sfc_idx],
-                model_sounding.Td[sfc_idx],
+                parcel_starts[current_time].T,
+                parcel_starts[current_time].Td,
                 p_pa_desc[0],
                 p_pa_desc,
             );
@@ -255,6 +261,47 @@ function draw_skewt()
 
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T);
         draw_skewt_profile(td_pts, color_Td, model_sounding.Td);
+
+        if (!document.getElementById("edit_mode").checked &&
+             document.getElementById("launch_parcel").checked &&
+             parcel_starts)
+        {
+            const p_pa_desc = [...model_sounding.p_hpa].sort((a, b) => b - a);
+            const sfc_p_hpa = p_pa_desc[0];
+
+            const draw_parcel_marker = (get_T, set_T, color) =>
+            {
+                const node = chart.append("circle")
+                    .attr("cx", x(skew_transform(get_T(), sfc_p_hpa)))
+                    .attr("cy", y(sfc_p_hpa))
+                    .attr("r", 5)
+                    .attr("fill", "white")
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2)
+                    .style("cursor", "grab");
+
+                node.call(d3.drag()
+                    .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
+                    .on("drag",  function (event) {
+                        set_T(inv_skew_transform(x.invert(event.x), sfc_p_hpa));
+                        node.attr("cx", x(skew_transform(get_T(), sfc_p_hpa)));
+                        redraw_parcel();
+                    })
+                    .on("end",   function () { d3.select(this).style("cursor", "grab"); })
+                );
+            };
+
+            draw_parcel_marker(
+                ()  => parcel_starts[current_time].T,
+                val => { parcel_starts[current_time].T = val; },
+                "#000"
+            );
+            draw_parcel_marker(
+                ()  => parcel_starts[current_time].Td,
+                val => { parcel_starts[current_time].Td = val; },
+                "#000"
+            );
+        }
 
         redraw_parcel();
     }
