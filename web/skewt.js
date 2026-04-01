@@ -371,6 +371,15 @@ document.getElementById("sounding_upload").addEventListener("change", (e) =>
             draw_skewt();
         })
         .catch(err => alert("Upload failed: " + err.message));
+    document.getElementById("remove_sounding_btn").style.display = "";
+});
+
+document.getElementById("remove_sounding_btn").addEventListener("click", () =>
+{
+    obs_sounding = null;
+    document.getElementById("sounding_upload").value = "";
+    document.getElementById("remove_sounding_btn").style.display = "none";
+    draw_skewt();
 });
 
 document.getElementById("download_btn").addEventListener("click", () =>
