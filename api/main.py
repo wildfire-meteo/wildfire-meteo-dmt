@@ -20,6 +20,7 @@ from pathlib import Path
 import io
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import pandas as pd
@@ -127,5 +128,16 @@ async def upload_sounding(file: UploadFile = File(...)):
     }
 
 
+_web = Path(__file__).parent.parent / "web"
+
+
+@app.get("/{filename}.js")
+def serve_js(filename: str):
+    path = _web / f"{filename}.js"
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 # Serve the frontend. Must be last so API routes take priority.
-app.mount("/", StaticFiles(directory=Path(__file__).parent.parent / "web", html=True))
+app.mount("/", StaticFiles(directory=_web, html=True))
