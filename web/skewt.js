@@ -344,7 +344,7 @@ function draw_skewt()
         const model = document.getElementById("model_select").selectedOptions[0].text;
         const time = model_forecast.times[current_time];
         const selected_case = document.getElementById("case_select").value;
-        const case_prefix = (obs_sounding && selected_case) ? document.getElementById("case_select").selectedOptions[0].text + "  |  " : "";
+        const case_prefix = selected_case ? document.getElementById("case_select").selectedOptions[0].text + "  |  " : "";
 
         g.append("text")
             .attr("x", W / 2).attr("y", -10)

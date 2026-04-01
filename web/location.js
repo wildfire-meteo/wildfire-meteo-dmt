@@ -15,11 +15,17 @@
 // limitations under the License.
 //
 
+function reset_case_select()
+{
+    document.getElementById("case_select").value = "";
+}
+
 function set_location(lat, lon)
 {
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
     document.getElementById("date_input").value = new Date().toISOString().slice(0, 10);
+    reset_case_select();
 }
 
 function here_and_now()
@@ -41,6 +47,9 @@ function here_and_now()
 }
 
 document.getElementById("here_and_now_btn").addEventListener("click", here_and_now);
+
+for (const id of ["lat_input", "lon_input", "date_input"])
+    document.getElementById(id).addEventListener("input", reset_case_select);
 
 document.getElementById("case_select").addEventListener("change", (e) =>
 {
