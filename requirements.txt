@@ -1,9 +1,0 @@
-fastapi
-uvicorn[standard]
-numpy
-pandas
-xarray
-requests
-openmeteo-requests
-requests-cache
-retry-requests
