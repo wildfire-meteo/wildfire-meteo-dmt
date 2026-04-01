@@ -358,7 +358,7 @@ function draw_skewt()
 function set_obs_sounding(data)
 {
     obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
-    document.getElementById("remove_sounding_btn").style.display = "";
+    document.querySelectorAll(".remove_sounding_btn").forEach(b => b.style.display = "");
     draw_skewt();
 }
 
@@ -390,13 +390,13 @@ document.getElementById("fetch_sounding_btn").addEventListener("click", () =>
         .catch(err => alert("Failed to fetch sounding. " + err.message));
 });
 
-document.getElementById("remove_sounding_btn").addEventListener("click", () =>
+document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListener("click", () =>
 {
     obs_sounding = null;
     document.getElementById("sounding_upload").value = "";
-    document.getElementById("remove_sounding_btn").style.display = "none";
+    document.querySelectorAll(".remove_sounding_btn").forEach(b => b.style.display = "none");
     draw_skewt();
-});
+}));
 
 document.getElementById("download_btn").addEventListener("click", () =>
 {
