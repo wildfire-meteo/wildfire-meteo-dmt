@@ -32,15 +32,15 @@ const color_T   = "#EB0056";
 const color_Td  = "#0056EB";
 const font_size = "14px";
 
-const skew_factor = 35;
-
 function skew_transform(T_k, p_hpa)
 {
+    const skew_factor = +document.getElementById("skew_factor").value;
     return (T_k - 273.15) + skew_factor * (Math.log(1000) - Math.log(p_hpa));
 }
 
 function inv_skew_transform(T_skewed, p_hpa)
 {
+    const skew_factor = +document.getElementById("skew_factor").value;
     return T_skewed - skew_factor * (Math.log(1000) - Math.log(p_hpa)) + 273.15;
 }
 
@@ -117,6 +117,18 @@ document.getElementById("show_dry_adiabats").addEventListener("change", draw_ske
 document.getElementById("show_moist_adiabats").addEventListener("change", draw_skewt);
 document.getElementById("edit_mode").addEventListener("change", draw_skewt);
 
+document.getElementById("skew_factor").addEventListener("input", (e) =>
+{
+    document.getElementById("skew_factor_label").textContent = `Skew factor: ${e.target.value}`;
+    draw_skewt();
+});
+
+document.getElementById("p_top").addEventListener("input", (e) =>
+{
+    document.getElementById("p_top_label").textContent = `Top: ${e.target.value} hPa`;
+    draw_skewt();
+});
+
 function draw_skewt_lines(chart, x, y, temps, pressures_pa, color)
 {
     const p_hpa = pressures_pa.map(p => p / 100);
@@ -145,7 +157,7 @@ function draw_skewt()
     if (W <= 0 || H <= 0) return;
 
     const x = d3.scaleLinear().domain([-40, 50]).range([0, W]);
-    const y = d3.scaleLog().domain([1013, 100]).range([H, 0]);
+    const y = d3.scaleLog().domain([1013, +document.getElementById("p_top").value]).range([H, 0]);
 
     const g = svg.append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);

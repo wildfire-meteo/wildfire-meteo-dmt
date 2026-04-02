@@ -176,6 +176,14 @@
                             <input type="checkbox" id="show_moist_adiabats" checked>
                             Moist adiabats <span style="color:#0D9146"><b>&mdash;&mdash;&mdash;</b></span>
                         </label>
+                        <label>
+                            <span id="skew_factor_label">Skew factor: 35</span>
+                            <input type="range" id="skew_factor" min="0" max="50" value="35" step="1">
+                        </label>
+                        <label>
+                            <span id="p_top_label">Top: 100 hPa</span>
+                            <input type="range" id="p_top" min="100" max="500" value="100" step="10" style="direction:rtl">
+                        </label>
                         <button id="download_btn" title="Save as PNG">
                             <span class="material-icons">download</span> Save PNG
                         </button>
