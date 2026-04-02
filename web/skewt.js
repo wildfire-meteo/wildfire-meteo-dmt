@@ -21,6 +21,16 @@ const svg = d3.select("#skewt");
 
 const margin = { top: 30, right: 30, bottom: 65, left: 70 };
 
+let current_zoom = d3.zoomIdentity;
+
+const zoom = d3.zoom()
+    .scaleExtent([0.5, 10])
+    .on("zoom", (event) => { current_zoom = event.transform; draw_skewt(); });
+
+svg.call(zoom);
+svg.on("dblclick.zoom", null);
+svg.on("dblclick", () => zoom.transform(svg, d3.zoomIdentity));
+
 let bg_data = null;
 let model_sounding = null;
 let obs_sounding = null;
@@ -156,8 +166,8 @@ function draw_skewt()
     const H = svg.node().clientHeight - margin.top  - margin.bottom;
     if (W <= 0 || H <= 0) return;
 
-    const x = d3.scaleLinear().domain([-40, 50]).range([0, W]);
-    const y = d3.scaleLog().domain([1013, +document.getElementById("p_top").value]).range([H, 0]);
+    const x = current_zoom.rescaleX(d3.scaleLinear().domain([-40, 50]).range([0, W]));
+    const y = current_zoom.rescaleY(d3.scaleLog().domain([1013, +document.getElementById("p_top").value]).range([H, 0]));
 
     const g = svg.append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
