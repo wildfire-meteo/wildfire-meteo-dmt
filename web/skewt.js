@@ -99,7 +99,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
 
         const sfc_idx = data.p_hpa.indexOf(Math.max(...data.p_hpa));
         parcel_starts = data.T.map((T_arr, ti) => ({
-            T:  T_arr[sfc_idx] + 2,
+            T:  T_arr[sfc_idx],
             Td: data.Td[ti][sfc_idx],
         }));
 

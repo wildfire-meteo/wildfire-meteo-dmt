@@ -119,17 +119,17 @@ export function calc_entraining_parcel(
     const rho_e    = p_e.map((p, k) => p / (Rd * exner_e[k] * thetav_e[k]));
 
     // Allocate parcel arrays.
-    const theta_p  = new Float32Array(n);
-    const qt_p     = new Float32Array(n);
-    const thetav_p = new Float32Array(n);
-    const T_p      = new Float32Array(n);
-    const Tv_p     = new Float32Array(n);
-    const area_p   = new Float32Array(n);
-    const w_p      = new Float32Array(n);
-    const mf_p     = new Float32Array(n);
-    const ent_p    = new Float32Array(n);
-    const det_p    = new Float32Array(n);
-    const type_p   = new Int8Array(n);
+    const theta_p  = new Array(n);
+    const qt_p     = new Array(n);
+    const thetav_p = new Array(n);
+    const T_p      = new Array(n);
+    const Tv_p     = new Array(n);
+    const area_p   = new Array(n);
+    const w_p      = new Array(n);
+    const mf_p     = new Array(n);
+    const ent_p    = new Array(n);
+    const det_p    = new Array(n);
+    const type_p   = new Array(n).fill(0);
 
     // Initial conditions.
     theta_p[0] = theta_e[0] + fire_multiplier * dtheta_plume_s;
@@ -181,7 +181,7 @@ export function calc_entraining_parcel(
     }
 
     // Slice results to active portion and compute derived quantities.
-    const sl     = arr => Array.from(arr.slice(0, i));
+    const sl     = arr => arr.slice(0, i);
     const z_out  = z.slice(0, i);
     const p_out  = sl(p_e);
     const T_out  = sl(T_p);
