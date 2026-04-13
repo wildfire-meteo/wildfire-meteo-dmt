@@ -137,6 +137,7 @@ document.getElementById("fire_area").addEventListener("input", (e) =>
         `Fire area: ${area_km2} km²`;
     draw_skewt();
 });
+document.getElementById("show_isobars").addEventListener("change", draw_skewt);
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
 document.getElementById("show_isohumes").addEventListener("change", draw_skewt);
 document.getElementById("show_dry_adiabats").addEventListener("change", draw_skewt);
@@ -154,6 +155,19 @@ document.getElementById("p_top").addEventListener("input", (e) =>
     document.getElementById("p_top_label").textContent = `Top: ${e.target.value} hPa`;
     draw_skewt();
 });
+
+function draw_isobars(chart, y, W)
+{
+    const p_levels = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100];
+    p_levels.forEach(p =>
+    {
+        chart.append("line")
+            .attr("x1", 0).attr("y1", y(p))
+            .attr("x2", W).attr("y2", y(p))
+            .attr("stroke", "rgba(179,179,179,0.5)")
+            .attr("stroke-width", 1);
+    });
+}
 
 function draw_skewt_lines(chart, x, y, temps, pressures_pa, color)
 {
@@ -197,6 +211,9 @@ function draw_skewt()
         .append("rect").attr("width", W).attr("height", H);
 
     const chart = g.append("g").attr("clip-path", "url(#skewt-clip)");
+
+    if (document.getElementById("show_isobars").checked)
+        draw_isobars(chart, y, W);
 
     if (bg_data)
     {
@@ -437,7 +454,7 @@ function draw_skewt()
     }
 
     g.append("g").call(d3.axisLeft(y)
-        .tickValues([1000, 850, 700, 500, 400, 300, 200, 100])
+        .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100])
         .tickFormat(d => d))
         .selectAll("text").style("font-size", font_size);
 
