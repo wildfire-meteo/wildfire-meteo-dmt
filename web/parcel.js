@@ -15,7 +15,25 @@
 // limitations under the License.
 //
 
-import { exner, qsat, dewpoint, calc_moist_adiabat } from "./thermo.js";
+import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_temp } from "./thermo.js";
+
+
+function interp(x, xp, fp)
+{
+    // Linear interpolation of fp at positions x, given sample points xp (ascending).
+    const n = xp.length;
+    return x.map(xi => {
+        if (xi <= xp[0])    return fp[0];
+        if (xi >= xp[n-1])  return fp[n-1];
+        let lo = 0, hi = n - 1;
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (xp[mid] <= xi) lo = mid; else hi = mid;
+        }
+        const t = (xi - xp[lo]) / (xp[hi] - xp[lo]);
+        return fp[lo] + t * (fp[hi] - fp[lo]);
+    });
+}
 
 
 export function find_lcl(T_sfc, Td_sfc, p_sfc, tol=5)
@@ -71,5 +89,120 @@ export function calc_non_entraining_parcel(T_sfc, Td_sfc, p_sfc, p)
         p_dry,
         T_moist,
         p_moist,
+    };
+}
+
+
+export function calc_entraining_parcel(
+    z_env, theta_env, thetav_env, qt_env, p_env,
+    dtheta_plume_s, dq_plume_s, area_plume_s,
+    {
+        fire_multiplier = 1,
+        a_w    = 1.0,
+        b_w    = 0.2,
+        fac_ent = 0.8,
+        beta   = 0.4,
+        dz     = 50,
+        z_max  = 5000,
+    } = {})
+{
+    // Build uniform height grid.
+    const n = Math.floor(z_max / dz);
+    const z = Array.from({ length: n }, (_, i) => i * dz);
+
+    // Interpolate environment to parcel grid.
+    const theta_e  = interp(z, z_env, theta_env);
+    const thetav_e = interp(z, z_env, thetav_env);
+    const qt_e     = interp(z, z_env, qt_env);
+    const p_e      = interp(z, z_env, p_env);
+    const exner_e  = p_e.map(p => exner(p));
+    const rho_e    = p_e.map((p, k) => p / (Rd * exner_e[k] * thetav_e[k]));
+
+    // Allocate parcel arrays.
+    const theta_p  = new Float32Array(n);
+    const qt_p     = new Float32Array(n);
+    const thetav_p = new Float32Array(n);
+    const T_p      = new Float32Array(n);
+    const Tv_p     = new Float32Array(n);
+    const area_p   = new Float32Array(n);
+    const w_p      = new Float32Array(n);
+    const mf_p     = new Float32Array(n);
+    const ent_p    = new Float32Array(n);
+    const det_p    = new Float32Array(n);
+    const type_p   = new Int8Array(n);
+
+    // Initial conditions.
+    theta_p[0] = theta_e[0] + fire_multiplier * dtheta_plume_s;
+    qt_p[0]    = qt_e[0]    + fire_multiplier * dq_plume_s;
+
+    let { T, ql, qi } = sat_adjust(theta_p[0], qt_p[0], p_e[0]);
+    thetav_p[0] = virtual_temp(theta_p[0], qt_p[0], ql, qi);
+    T_p[0]      = T;
+    Tv_p[0]     = virtual_temp(T, qt_p[0], ql, qi);
+    area_p[0]   = area_plume_s;
+    w_p[0]      = 0.1;
+    mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
+
+    // Entrainment settings (Morton formulation).
+    const epsi = fac_ent * beta / Math.sqrt(area_plume_s);
+    const delt = epsi / beta;
+
+    ent_p[0] = epsi * mf_p[0];
+    det_p[0] = 0.0;
+
+    // Integrate upward.
+    const w_eps = 1e-6;
+    let i = 1;
+    for (; i < n; i++)
+    {
+        mf_p[i]    = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
+        theta_p[i] = theta_p[i-1] - ent_p[i-1] * (theta_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
+        qt_p[i]    = qt_p[i-1]    - ent_p[i-1] * (qt_p[i-1]    - qt_e[i-1])    / mf_p[i-1] * dz;
+
+        ({ T, ql, qi } = sat_adjust(theta_p[i], qt_p[i], p_e[i]));
+        thetav_p[i] = virtual_temp(theta_p[i], qt_p[i], ql, qi);
+        T_p[i]      = T;
+        Tv_p[i]     = virtual_temp(T, qt_p[i], ql, qi);
+
+        if (ql > 0 || qi > 0)
+            type_p[i] = 1;
+
+        const buoy = g / thetav_e[i-1] * (thetav_p[i-1] - thetav_e[i-1]);
+        const w2   = w_p[i-1]**2 + 2 * (a_w * buoy - b_w * epsi * w_p[i-1]**2) * dz;
+        w_p[i]     = Math.sqrt(Math.max(0, w2));
+
+        ent_p[i] = epsi * mf_p[i];
+        det_p[i] = delt * mf_p[i];
+
+        area_p[i] = mf_p[i] / (rho_e[i] * (w_p[i] + w_eps));
+
+        if (area_p[i] <= 0 || w_p[i] < w_eps)
+            break;
+    }
+
+    // Slice results to active portion and compute derived quantities.
+    const sl     = arr => Array.from(arr.slice(0, i));
+    const z_out  = z.slice(0, i);
+    const p_out  = sl(p_e);
+    const T_out  = sl(T_p);
+    const qt_out = sl(qt_p);
+    // Cap Td at T: above LCL the parcel is saturated so Td == T.
+    const Td_out = qt_out.map((q, k) => Math.min(dewpoint(q, p_out[k]), T_out[k]));
+
+    return {
+        T:           T_out,
+        Tv:          sl(Tv_p),
+        Td:          Td_out,
+        theta:       sl(theta_p),
+        thetav:      sl(thetav_p),
+        qt:          qt_out,
+        area:        sl(area_p),
+        w:           sl(w_p),
+        mass_flux:   sl(mf_p),
+        entrainment: sl(ent_p),
+        detrainment: sl(det_p),
+        type:        Array.from(type_p.slice(0, i)),
+        z:           z_out,
+        p:           p_out,
     };
 }

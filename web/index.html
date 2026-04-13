@@ -109,12 +109,12 @@
                             Mode
                             <select id="parcel_mode">
                                 <option value="non_entraining">Non-entraining</option>
-                                <option value="entraining" disabled>Entraining</option>
+                                <option value="entraining">Entraining</option>
                             </select>
                         </label>
                         <label>
-                            Fire area
-                            <input type="range" min="-10" max="45" value="20">
+                            <span id="fire_area_label">Fire area: 1.0 km²</span>
+                            <input type="range" id="fire_area" min="5" max="7" step="0.1" value="6">
                         </label>
                     </div>
                 </details>

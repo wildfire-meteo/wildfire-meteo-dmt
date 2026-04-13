@@ -64,6 +64,48 @@ export function exner(p)
 }
 
 
+export function dqsatdT(T, p)
+{
+    const es     = esat(T);
+    const Tc     = T - T0;
+    const des_dT = es * a * b / (Tc + b) ** 2;
+    const den    = p - (1.0 - eps) * es;
+    return eps * p * des_dT / den ** 2;
+}
+
+
+export function virtual_temp(T, qt, ql=0, qi=0)
+{
+    return T * (1 - (1 - Rv/Rd) * qt - Rv/Rd * (ql + qi));
+}
+
+
+export function sat_adjust(thl, qt, p)
+{
+    const tl = thl * exner(p);
+    let qs = qsat(tl, p);
+
+    if (qt - qs <= 0.0)
+        return { T: tl, ql: 0.0, qi: 0.0, qs };
+
+    let tnr = tl;
+    let tnr_old = 1e9;
+    let niter = 0;
+    while (Math.abs(tnr - tnr_old) / tnr_old > 1e-5 && niter < 10) {
+        niter++;
+        tnr_old = tnr;
+        qs = qsat(tnr, p);
+        const f       = tnr - tl - Lv / cp * (qt - qs);
+        const f_prime = 1.0 + Lv / cp * dqsatdT(tnr, p);
+        tnr -= f / f_prime;
+    }
+
+    qs = qsat(tnr, p);
+    const ql = Math.max(0.0, qt - qs);
+    return { T: tnr, ql, qi: 0.0, qs };
+}
+
+
 export function dTdp(T, p)
 {
     const qs = qsat(T, p);

@@ -15,7 +15,8 @@
 // limitations under the License.
 //
 
-import { calc_non_entraining_parcel } from "./parcel.js";
+import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
+import { exner, qsat } from "./thermo.js";
 
 const svg = d3.select("#skewt");
 
@@ -87,14 +88,18 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("time_section").style.display = "";
 
         model_sounding = {
-            p_hpa: data.p_hpa,
-            T:     data.T[current_time],
-            Td:    data.Td[current_time],
+            p_hpa:  data.p_hpa,
+            T:      data.T[current_time],
+            Td:     data.Td[current_time],
+            z_agl:  data.z_agl[current_time],
+            theta:  data.theta[current_time],
+            thetav: data.thetav[current_time],
+            qt:     data.qt[current_time],
         };
 
         const sfc_idx = data.p_hpa.indexOf(Math.max(...data.p_hpa));
         parcel_starts = data.T.map((T_arr, ti) => ({
-            T:  T_arr[sfc_idx],
+            T:  T_arr[sfc_idx] + 2,
             Td: data.Td[ti][sfc_idx],
         }));
 
@@ -111,9 +116,13 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     document.getElementById("time_label").textContent = model_forecast.times[current_time] + " UTC";
 
     model_sounding = {
-        p_hpa: model_forecast.p_hpa,
-        T:     model_forecast.T[current_time],
-        Td:    model_forecast.Td[current_time],
+        p_hpa:  model_forecast.p_hpa,
+        T:      model_forecast.T[current_time],
+        Td:     model_forecast.Td[current_time],
+        z_agl:  model_forecast.z_agl[current_time],
+        theta:  model_forecast.theta[current_time],
+        thetav: model_forecast.thetav[current_time],
+        qt:     model_forecast.qt[current_time],
     };
 
     draw_skewt();
@@ -121,6 +130,13 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
 
 document.getElementById("launch_parcel").addEventListener("change", draw_skewt);
 document.getElementById("parcel_mode").addEventListener("change", draw_skewt);
+document.getElementById("fire_area").addEventListener("input", (e) =>
+{
+    const area_km2 = (10 ** (+e.target.value - 6)).toFixed(1);
+    document.getElementById("fire_area_label").textContent =
+        `Fire area: ${area_km2} km²`;
+    draw_skewt();
+});
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
 document.getElementById("show_isohumes").addEventListener("change", draw_skewt);
 document.getElementById("show_dry_adiabats").addEventListener("change", draw_skewt);
@@ -209,21 +225,12 @@ function draw_skewt()
 
             if (!document.getElementById("launch_parcel").checked) return;
 
-            const p_pa = model_sounding.p_hpa.map(p => p * 100);
-            const p_pa_desc = [...p_pa].sort((a, b) => b - a);
-            const parcel = calc_non_entraining_parcel(
-                parcel_starts[current_time].T,
-                parcel_starts[current_time].Td,
-                p_pa_desc[0],
-                p_pa_desc,
-            );
-
             const parcel_line = d3.line()
                 .x(d => x(skew_transform(d[0], d[1])))
                 .y(d => y(d[1]));
 
-            [[parcel.p_dry, parcel.T_dry], [parcel.p_isohume, parcel.T_isohume], [parcel.p_moist, parcel.T_moist]]
-                .forEach(([p_arr, T_arr]) =>
+            const draw_parcel_segments = (segments) =>
+                segments.forEach(([p_arr, T_arr]) =>
                 {
                     chart.append("path")
                         .attr("class", "parcel-path")
@@ -234,6 +241,52 @@ function draw_skewt()
                         .attr("stroke-dasharray", "6,3")
                         .attr("d", parcel_line);
                 });
+
+            const mode = document.getElementById("parcel_mode").value;
+
+            if (mode === "non_entraining")
+            {
+                const p_pa = model_sounding.p_hpa.map(p => p * 100);
+                const p_pa_desc = [...p_pa].sort((a, b) => b - a);
+                const parcel = calc_non_entraining_parcel(
+                    parcel_starts[current_time].T,
+                    parcel_starts[current_time].Td,
+                    p_pa_desc[0],
+                    p_pa_desc,
+                );
+                draw_parcel_segments([
+                    [parcel.p_dry,    parcel.T_dry],
+                    [parcel.p_isohume, parcel.T_isohume],
+                    [parcel.p_moist,  parcel.T_moist],
+                ]);
+            }
+            else if (mode === "entraining")
+            {
+                const area   = 10 ** +document.getElementById("fire_area").value;
+                const p_sfc  = model_sounding.p_hpa[0] * 100;
+                const T_s    = parcel_starts[current_time].T;
+                const Td_s   = parcel_starts[current_time].Td;
+                const dtheta = T_s / exner(p_sfc) - model_sounding.theta[0];
+                const dq     = qsat(Td_s, p_sfc) - model_sounding.qt[0];
+                const parcel = calc_entraining_parcel(
+                    model_sounding.z_agl,
+                    model_sounding.theta,
+                    model_sounding.thetav,
+                    model_sounding.qt,
+                    model_sounding.p_hpa.map(p => p * 100),
+                    dtheta,
+                    dq,
+                    area,
+                    { z_max: 12000 },
+                );
+                // T for the full ascent; Td only below LCL (where type == 0).
+                const lcl_idx = parcel.type.indexOf(1);
+                const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
+                draw_parcel_segments([
+                    [parcel.p,                  parcel.T],
+                    [parcel.p.slice(0, n_sub),  parcel.Td.slice(0, n_sub)],
+                ]);
+            }
         }
 
         function draw_skewt_profile(pts, color, source_T)
