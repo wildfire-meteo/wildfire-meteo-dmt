@@ -538,6 +538,53 @@ document.getElementById("fetch_sounding_btn").addEventListener("click", () =>
         .catch(err => alert("Failed to fetch sounding. " + err.message));
 });
 
+document.getElementById("match_profile_btn").addEventListener("click", () =>
+{
+    if (!model_sounding || !obs_sounding) return;
+
+    const interp_log_p = (p_target, p_src, v_src) =>
+    {
+        const pairs = p_src.map((p, i) => [p, v_src[i]])
+            .filter(([p, v]) => Number.isFinite(p) && Number.isFinite(v))
+            .sort((a, b) => b[0] - a[0]);
+        if (pairs.length === 0) return NaN;
+        if (p_target >= pairs[0][0]) return pairs[0][1];
+        if (p_target <= pairs[pairs.length - 1][0]) return pairs[pairs.length - 1][1];
+        for (let i = 0; i < pairs.length - 1; i++)
+        {
+            const [p0, v0] = pairs[i];
+            const [p1, v1] = pairs[i + 1];
+            if (p_target <= p0 && p_target >= p1)
+            {
+                const f = (Math.log(p_target) - Math.log(p0)) / (Math.log(p1) - Math.log(p0));
+                return v0 + f * (v1 - v0);
+            }
+        }
+        return NaN;
+    };
+
+    const p_obs_min = Math.min(...obs_sounding.p_hpa);
+    const p_obs_max = Math.max(...obs_sounding.p_hpa);
+
+    model_sounding.T  = model_sounding.p_hpa.map((p, i) =>
+        (p <= p_obs_max && p >= p_obs_min)
+            ? interp_log_p(p, obs_sounding.p_hpa, obs_sounding.T)
+            : model_sounding.T[i]);
+    model_sounding.Td = model_sounding.p_hpa.map((p, i) =>
+        (p <= p_obs_max && p >= p_obs_min)
+            ? interp_log_p(p, obs_sounding.p_hpa, obs_sounding.Td)
+            : model_sounding.Td[i]);
+
+    if (parcel_starts && parcel_starts[current_time])
+    {
+        const sfc_idx = model_sounding.p_hpa.indexOf(Math.max(...model_sounding.p_hpa));
+        parcel_starts[current_time].T  = model_sounding.T[sfc_idx];
+        parcel_starts[current_time].Td = model_sounding.Td[sfc_idx];
+    }
+
+    draw_skewt();
+});
+
 document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListener("click", () =>
 {
     obs_sounding = null;
