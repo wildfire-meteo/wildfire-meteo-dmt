@@ -264,13 +264,17 @@ function draw_skewt()
             if (mode === "non_entraining")
             {
                 const p_pa = model_sounding.p_hpa.map(p => p * 100);
+
                 const p_pa_desc = [...p_pa].sort((a, b) => b - a);
+
                 const parcel = calc_non_entraining_parcel(
                     parcel_starts[current_time].T,
                     parcel_starts[current_time].Td,
                     p_pa_desc[0],
                     p_pa_desc,
+
                 );
+
                 draw_parcel_segments([
                     [parcel.p_dry,    parcel.T_dry],
                     [parcel.p_isohume, parcel.T_isohume],
@@ -280,22 +284,25 @@ function draw_skewt()
             else if (mode === "entraining")
             {
                 const area   = 10 ** +document.getElementById("fire_area").value;
-                const p_sfc  = model_sounding.p_hpa[0] * 100;
+                const p_pa   = model_sounding.p_hpa.map(p => p * 100);
+                const p_sfc  = p_pa[0];
                 const T_s    = parcel_starts[current_time].T;
                 const Td_s   = parcel_starts[current_time].Td;
-                const dtheta = T_s / exner(p_sfc) - model_sounding.theta[0];
-                const dq     = qsat(Td_s, p_sfc) - model_sounding.qt[0];
+                const dtheta = T_s / exner(p_sfc) - model_sounding.T[0] / exner(p_sfc);
+                const dq     = qsat(Td_s, p_sfc) - qsat(model_sounding.Td[0], p_sfc);
+
                 const parcel = calc_entraining_parcel(
                     model_sounding.z_agl,
-                    model_sounding.theta,
-                    model_sounding.thetav,
-                    model_sounding.qt,
-                    model_sounding.p_hpa.map(p => p * 100),
+                    model_sounding.T,
+                    model_sounding.Td,
+                    p_pa,
                     dtheta,
                     dq,
                     area,
                     { z_max: 12000 },
+
                 );
+
                 // T for the full ascent; Td only below LCL (where type == 0).
                 const lcl_idx = parcel.type.indexOf(1);
                 const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;

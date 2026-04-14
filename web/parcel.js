@@ -94,7 +94,7 @@ export function calc_non_entraining_parcel(T_sfc, Td_sfc, p_sfc, p)
 
 
 export function calc_entraining_parcel(
-    z_env, theta_env, thetav_env, qt_env, p_env,
+    z_env, T_env, Td_env, p_env,
     dtheta_plume_s, dq_plume_s, area_plume_s,
     {
         fire_multiplier = 1,
@@ -110,12 +110,15 @@ export function calc_entraining_parcel(
     const n = Math.floor(z_max / dz);
     const z = Array.from({ length: n }, (_, i) => i * dz);
 
-    // Interpolate environment to parcel grid.
-    const theta_e  = interp(z, z_env, theta_env);
-    const thetav_e = interp(z, z_env, thetav_env);
-    const qt_e     = interp(z, z_env, qt_env);
+    // Interpolate environment to parcel grid, then derive thermodynamic variables.
+    const T_e      = interp(z, z_env, T_env);
+    const Td_e     = interp(z, z_env, Td_env);
     const p_e      = interp(z, z_env, p_env);
+
     const exner_e  = p_e.map(p => exner(p));
+    const theta_e  = T_e.map((T, k) => T / exner_e[k]);
+    const qt_e     = Td_e.map((Td, k) => qsat(Td, p_e[k]));
+    const thetav_e = theta_e.map((th, k) => virtual_temp(th, qt_e[k]));
     const rho_e    = p_e.map((p, k) => p / (Rd * exner_e[k] * thetav_e[k]));
 
     // Allocate parcel arrays.
