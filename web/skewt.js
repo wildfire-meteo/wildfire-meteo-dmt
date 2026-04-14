@@ -597,10 +597,14 @@ document.getElementById("match_profile_btn").addEventListener("click", () =>
     const p_obs_min = Math.min(...obs_sounding.p_hpa);
     const p_obs_max = Math.max(...obs_sounding.p_hpa);
 
-    model_sounding.T  = model_sounding.p_hpa.map((p, i) =>
-        (p <= p_obs_max && p >= p_obs_min) ? interp_log_p(p, T_pairs)  : model_sounding.T[i]);
-    model_sounding.Td = model_sounding.p_hpa.map((p, i) =>
-        (p <= p_obs_max && p >= p_obs_min) ? interp_log_p(p, Td_pairs) : model_sounding.Td[i]);
+    model_sounding.p_hpa.forEach((p, i) =>
+    {
+        if (p <= p_obs_max && p >= p_obs_min)
+        {
+            model_sounding.T[i]  = interp_log_p(p, T_pairs);
+            model_sounding.Td[i] = interp_log_p(p, Td_pairs);
+        }
+    });
 
     if (parcel_starts && parcel_starts[current_time])
     {
