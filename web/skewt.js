@@ -43,6 +43,11 @@ const color_T   = "#EB0056";
 const color_Td  = "#0056EB";
 const font_size = "14px";
 
+// Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
+// the observed T/Td profile before interpolating onto the model's pressure
+// grid. Larger = more smoothing. Set to 0 to disable smoothing entirely.
+const MATCH_PROFILE_SMOOTHING_HPA = 5;
+
 function skew_transform(T_k, p_hpa)
 {
     const skew_factor = +document.getElementById("skew_factor").value;
@@ -542,11 +547,34 @@ document.getElementById("match_profile_btn").addEventListener("click", () =>
 {
     if (!model_sounding || !obs_sounding) return;
 
-    const interp_log_p = (p_target, p_src, v_src) =>
+    const smooth_p = (pairs, half_width_hpa) =>
     {
-        const pairs = p_src.map((p, i) => [p, v_src[i]])
+        if (half_width_hpa <= 0) return pairs;
+        return pairs.map(([p, _], i) =>
+        {
+            let sum_w = 0, sum_wv = 0;
+            for (let j = 0; j < pairs.length; j++)
+            {
+                const d = (pairs[j][0] - p) / half_width_hpa;
+                if (Math.abs(d) > 3) continue;
+                const w = Math.exp(-0.5 * d * d);
+                sum_w  += w;
+                sum_wv += w * pairs[j][1];
+            }
+            return [p, sum_wv / sum_w];
+        });
+    };
+
+    const prep_profile = (v_src) =>
+    {
+        const pairs = obs_sounding.p_hpa.map((p, i) => [p, v_src[i]])
             .filter(([p, v]) => Number.isFinite(p) && Number.isFinite(v))
             .sort((a, b) => b[0] - a[0]);
+        return smooth_p(pairs, MATCH_PROFILE_SMOOTHING_HPA);
+    };
+
+    const interp_log_p = (p_target, pairs) =>
+    {
         if (pairs.length === 0) return NaN;
         if (p_target >= pairs[0][0]) return pairs[0][1];
         if (p_target <= pairs[pairs.length - 1][0]) return pairs[pairs.length - 1][1];
@@ -563,17 +591,16 @@ document.getElementById("match_profile_btn").addEventListener("click", () =>
         return NaN;
     };
 
+    const T_pairs  = prep_profile(obs_sounding.T);
+    const Td_pairs = prep_profile(obs_sounding.Td);
+
     const p_obs_min = Math.min(...obs_sounding.p_hpa);
     const p_obs_max = Math.max(...obs_sounding.p_hpa);
 
     model_sounding.T  = model_sounding.p_hpa.map((p, i) =>
-        (p <= p_obs_max && p >= p_obs_min)
-            ? interp_log_p(p, obs_sounding.p_hpa, obs_sounding.T)
-            : model_sounding.T[i]);
+        (p <= p_obs_max && p >= p_obs_min) ? interp_log_p(p, T_pairs)  : model_sounding.T[i]);
     model_sounding.Td = model_sounding.p_hpa.map((p, i) =>
-        (p <= p_obs_max && p >= p_obs_min)
-            ? interp_log_p(p, obs_sounding.p_hpa, obs_sounding.Td)
-            : model_sounding.Td[i]);
+        (p <= p_obs_max && p >= p_obs_min) ? interp_log_p(p, Td_pairs) : model_sounding.Td[i]);
 
     if (parcel_starts && parcel_starts[current_time])
     {
