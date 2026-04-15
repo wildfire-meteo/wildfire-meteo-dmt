@@ -43,6 +43,11 @@ const color_T   = "#EB0056";
 const color_Td  = "#0056EB";
 const font_size = "14px";
 
+// Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
+// the observed T/Td profile before interpolating onto the model's pressure
+// grid. Larger = more smoothing. Set to 0 to disable smoothing entirely.
+const MATCH_PROFILE_SMOOTHING_HPA = 5;
+
 function skew_transform(T_k, p_hpa)
 {
     const skew_factor = +document.getElementById("skew_factor").value;
@@ -505,7 +510,7 @@ function draw_skewt()
 function set_obs_sounding(data)
 {
     obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
-    document.querySelectorAll(".remove_sounding_btn").forEach(b => b.style.display = "");
+    document.getElementById("radiosonde_controls").style.display = "";
     draw_skewt();
 }
 
@@ -537,11 +542,84 @@ document.getElementById("fetch_sounding_btn").addEventListener("click", () =>
         .catch(err => alert("Failed to fetch sounding. " + err.message));
 });
 
+document.getElementById("match_profile_btn").addEventListener("click", () =>
+{
+    if (!model_sounding || !obs_sounding) return;
+
+    const smooth_p = (pairs, half_width_hpa) =>
+    {
+        if (half_width_hpa <= 0) return pairs;
+        return pairs.map(([p, _], i) =>
+        {
+            let sum_w = 0, sum_wv = 0;
+            for (let j = 0; j < pairs.length; j++)
+            {
+                const d = (pairs[j][0] - p) / half_width_hpa;
+                if (Math.abs(d) > 3) continue;
+                const w = Math.exp(-0.5 * d * d);
+                sum_w  += w;
+                sum_wv += w * pairs[j][1];
+            }
+            return [p, sum_wv / sum_w];
+        });
+    };
+
+    const prep_profile = (v_src) =>
+    {
+        const pairs = obs_sounding.p_hpa.map((p, i) => [p, v_src[i]])
+            .filter(([p, v]) => Number.isFinite(p) && Number.isFinite(v))
+            .sort((a, b) => b[0] - a[0]);
+        return smooth_p(pairs, MATCH_PROFILE_SMOOTHING_HPA);
+    };
+
+    const interp_log_p = (p_target, pairs) =>
+    {
+        if (pairs.length === 0) return NaN;
+        if (p_target >= pairs[0][0]) return pairs[0][1];
+        if (p_target <= pairs[pairs.length - 1][0]) return pairs[pairs.length - 1][1];
+        for (let i = 0; i < pairs.length - 1; i++)
+        {
+            const [p0, v0] = pairs[i];
+            const [p1, v1] = pairs[i + 1];
+            if (p_target <= p0 && p_target >= p1)
+            {
+                const f = (Math.log(p_target) - Math.log(p0)) / (Math.log(p1) - Math.log(p0));
+                return v0 + f * (v1 - v0);
+            }
+        }
+        return NaN;
+    };
+
+    const T_pairs  = prep_profile(obs_sounding.T);
+    const Td_pairs = prep_profile(obs_sounding.Td);
+
+    const p_obs_min = Math.min(...obs_sounding.p_hpa);
+    const p_obs_max = Math.max(...obs_sounding.p_hpa);
+
+    model_sounding.p_hpa.forEach((p, i) =>
+    {
+        if (p <= p_obs_max && p >= p_obs_min)
+        {
+            model_sounding.T[i]  = interp_log_p(p, T_pairs);
+            model_sounding.Td[i] = interp_log_p(p, Td_pairs);
+        }
+    });
+
+    if (parcel_starts && parcel_starts[current_time])
+    {
+        const sfc_idx = model_sounding.p_hpa.indexOf(Math.max(...model_sounding.p_hpa));
+        parcel_starts[current_time].T  = model_sounding.T[sfc_idx];
+        parcel_starts[current_time].Td = model_sounding.Td[sfc_idx];
+    }
+
+    draw_skewt();
+});
+
 document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListener("click", () =>
 {
     obs_sounding = null;
     document.getElementById("sounding_upload").value = "";
-    document.querySelectorAll(".remove_sounding_btn").forEach(b => b.style.display = "none");
+    document.getElementById("radiosonde_controls").style.display = "none";
     draw_skewt();
 }));
 
