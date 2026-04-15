@@ -83,7 +83,23 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
     {
         spinner.style.display = "none";
         model_forecast = data;
-        current_time = 12;
+
+        const time_str = document.getElementById("time_input").value;
+        if (time_str)
+        {
+            const [h, m]   = time_str.split(":").map(Number);
+            const target   = h * 60 + m;
+            current_time   = data.times.reduce((best, t, i) =>
+            {
+                const [th, tm] = t.split(":").map(Number);
+                const prev     = data.times[best].split(":").map(Number);
+                return Math.abs(th * 60 + tm - target) < Math.abs(prev[0] * 60 + prev[1] - target) ? i : best;
+            }, 0);
+        }
+        else
+        {
+            current_time = 12;
+        }
 
         const slider = document.getElementById("time_slider");
         slider.max = data.times.length - 1;

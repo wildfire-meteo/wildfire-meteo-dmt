@@ -46,9 +46,11 @@ function fetch_nearest_stations()
 
 function set_location(lat, lon)
 {
+    const now = new Date();
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
-    document.getElementById("date_input").value = new Date().toISOString().slice(0, 10);
+    document.getElementById("date_input").value = now.toISOString().slice(0, 10);
+    document.getElementById("time_input").value = now.toISOString().slice(11, 16);
     reset_case_select();
     fetch_nearest_stations();
 }
@@ -87,6 +89,7 @@ for (const id of ["lat_input", "lon_input"])
     document.getElementById(id).addEventListener("input", () => { reset_case_select(); fetch_nearest_stations(); });
 
 document.getElementById("date_input").addEventListener("input", reset_case_select);
+document.getElementById("time_input").addEventListener("input", reset_case_select);
 
 document.getElementById("case_select").addEventListener("change", (e) =>
 {
