@@ -53,15 +53,17 @@ function set_location(lat, lon)
     fetch_nearest_stations();
 }
 
-function here_and_now()
+function here_and_now(fetch_after = false)
 {
     if (navigator.geolocation)
     {
         navigator.geolocation.getCurrentPosition(
-            (pos) => set_location(
-                pos.coords.latitude.toFixed(4),
-                pos.coords.longitude.toFixed(4)
-            ),
+            (pos) =>
+            {
+                set_location(pos.coords.latitude.toFixed(4), pos.coords.longitude.toFixed(4));
+                if (fetch_after)
+                    document.getElementById("fetch_model_btn").click();
+            },
             () => set_location(52, 6)
         );
     }
@@ -71,7 +73,7 @@ function here_and_now()
     }
 }
 
-document.getElementById("here_and_now_btn").addEventListener("click", here_and_now);
+document.getElementById("here_and_now_btn").addEventListener("click", () => here_and_now(true));
 
 for (const id of ["lat_input", "lon_input"])
     document.getElementById(id).addEventListener("input", () => { reset_case_select(); fetch_nearest_stations(); });
