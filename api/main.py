@@ -139,5 +139,13 @@ def serve_js(filename: str):
     return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/{filename}.css")
+def serve_css(filename: str):
+    path = _web / f"{filename}.css"
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 # Serve the frontend. Must be last so API routes take priority.
 app.mount("/", StaticFiles(directory=_web, html=True))
