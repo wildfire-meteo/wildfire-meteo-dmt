@@ -213,8 +213,20 @@ function draw_skewt()
 {
     svg.selectAll("*").remove();
 
-    const W = svg.node().clientWidth  - margin.left - margin.right;
-    const H = svg.node().clientHeight - margin.top  - margin.bottom;
+    const W = svg.node().clientWidth - margin.left - margin.right;
+
+    const headerEl  = document.querySelector('header');
+    const toolbarEl = document.querySelector('.plot-toolbar');
+    const plotEl    = svg.node().closest('.plot');
+    const plotStyle = getComputedStyle(plotEl);
+    const vPad = parseFloat(plotStyle.paddingTop) + parseFloat(plotStyle.paddingBottom);
+    const svgH = window.innerHeight
+        - (headerEl  ? headerEl.offsetHeight  : 0)
+        - (toolbarEl ? toolbarEl.offsetHeight : 0)
+        - vPad;
+    svg.attr("height", svgH);
+    const H = svgH - margin.top - margin.bottom;
+
     if (W <= 0 || H <= 0) return;
 
     const x = current_zoom.rescaleX(d3.scaleLinear().domain([-40, 50]).range([0, W]));
