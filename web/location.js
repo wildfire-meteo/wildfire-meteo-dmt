@@ -72,7 +72,9 @@ function here_and_now(fetch_after = false)
             () =>
             {
                 document.getElementById("plot_spinner").style.display = "none";
-                set_location(52, 6);
+                const btn  = document.getElementById("here_and_now_btn");
+                btn.disabled = true;
+                btn.title    = "Enable location sharing in your browser to use this feature.";
             }
         );
     }
