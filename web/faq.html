@@ -1,0 +1,97 @@
+<!--
+    Copyright 2026 Wageningen University & Research (WUR)
+    Author: Bart van Stratum
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>FAQ — Wildfire meteo analysis tool</title>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
+        <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+        <link rel="stylesheet" href="style.css">
+        <style>
+            .faq-panel {
+                flex: 1;
+                width: 100%;
+                background: var(--color-surface);
+                padding: 2rem 2.5rem;
+            }
+
+            .faq-back {
+                display: inline-block;
+                margin-bottom: 1.5rem;
+                font-size: 0.85rem;
+                color: var(--color-accent);
+                text-decoration: none;
+                border-bottom: 1px dotted var(--color-accent);
+            }
+
+            .faq-grid {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1.5rem 3rem;
+            }
+
+            @media (max-width: 640px) {
+                .faq-grid { grid-template-columns: 1fr; }
+            }
+
+            .faq-item h2 {
+                font-size: 1rem;
+                font-weight: 600;
+                color: var(--color-accent);
+                margin-bottom: 0.5rem;
+            }
+
+            .faq-item p {
+                font-size: 0.9rem;
+                color: var(--color-text-muted);
+                line-height: 1.7;
+            }
+        </style>
+    </head>
+
+    <body>
+
+        <header>Wildfire meteo analysis tool &mdash; FAQ</header>
+
+        <main>
+            <div class="faq-panel">
+
+                <a href="/" class="faq-back">&larr; Back to tool</a>
+
+                <div class="faq-grid">
+
+                    <div class="faq-item">
+                        <h2>How do I enable location sharing in Firefox, Chrome, or Edge?</h2>
+                        <p>Click the <span class="material-icons" style="font-size:1rem;vertical-align:middle;">location_off</span> icon in the address bar and change the settings.</p>
+                    </div>
+
+                    <div class="faq-item">
+                        <h2>How do I enable location sharing in Safari (macOS)?</h2>
+                        <p>Go to <strong>Safari &rarr; Settings &rarr; Websites &rarr; Location</strong>, find this site and set it to <strong>Allow</strong>.</p>
+                    </div>
+
+                </div>
+
+            </div>
+        </main>
+
+    </body>
+</html>
