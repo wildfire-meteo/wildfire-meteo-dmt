@@ -119,21 +119,20 @@
                     </div>
                 </details>
 
+                <hr class="sidebar-divider">
+
                 <details class="section">
-                    <summary><span class="material-icons">upload_file</span> Upload <a href="https://wildfiredataportal.eu/" target="_blank" class="theme-link">WDP</a> sounding</summary>
+                    <summary><span class="material-icons">upload_file</span><a href="https://wildfiredataportal.eu/" target="_blank" class="theme-link">WDP</a> radiosonde</summary>
                     <div class="section-body">
                         <label>
-                            Sounding file
+                            Upload sounding .csv file
                             <input type="file" id="sounding_upload" accept=".csv">
                         </label>
-                        <button class="remove_sounding_btn" style="display:none">
-                            <span class="material-icons">delete</span> Remove sounding
-                        </button>
                     </div>
                 </details>
 
                 <details class="section">
-                    <summary><span class="material-icons">sensors</span> Radiosonde</summary>
+                    <summary><span class="material-icons">sensors</span>Routine radiosonde</summary>
                     <div class="section-body">
                         <label>
                             Nearest stations
@@ -151,14 +150,22 @@
                         <button id="fetch_sounding_btn" disabled>
                             <span class="material-icons">download</span> Fetch sounding
                         </button>
-                        <button id="match_profile_btn" style="display:none">
+                    </div>
+                </details>
+
+                <details class="section" id="radiosonde_controls" style="display:none">
+                    <summary><span class="material-icons">tune</span> Radiosonde controls</summary>
+                    <div class="section-body">
+                        <button id="match_profile_btn">
                             <span class="material-icons">show_chart</span> Match profile
                         </button>
-                        <button class="remove_sounding_btn" style="display:none">
+                        <button class="remove_sounding_btn">
                             <span class="material-icons">delete</span> Remove sounding
                         </button>
                     </div>
                 </details>
+
+                <hr class="sidebar-divider">
 
                 <details class="section">
                     <summary><span class="material-icons">image</span> Plot</summary>

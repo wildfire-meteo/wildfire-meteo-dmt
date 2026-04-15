@@ -510,8 +510,7 @@ function draw_skewt()
 function set_obs_sounding(data)
 {
     obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
-    document.querySelectorAll(".remove_sounding_btn").forEach(b => b.style.display = "");
-    document.getElementById("match_profile_btn").style.display = "";
+    document.getElementById("radiosonde_controls").style.display = "";
     draw_skewt();
 }
 
@@ -620,8 +619,7 @@ document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListene
 {
     obs_sounding = null;
     document.getElementById("sounding_upload").value = "";
-    document.querySelectorAll(".remove_sounding_btn").forEach(b => b.style.display = "none");
-    document.getElementById("match_profile_btn").style.display = "none";
+    document.getElementById("radiosonde_controls").style.display = "none";
     draw_skewt();
 }));
 
