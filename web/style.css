@@ -248,7 +248,7 @@ main {
     transition: background 0.15s;
 }
 
-.sidebar button:hover {
+.sidebar button:hover:not(:disabled) {
     background: var(--color-accent-dark);
 }
 
