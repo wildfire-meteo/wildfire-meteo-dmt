@@ -55,6 +55,9 @@ function set_location(lat, lon)
 
 function here_and_now(fetch_after = false)
 {
+    if (fetch_after)
+        document.getElementById("plot_spinner").style.display = "";
+
     if (navigator.geolocation)
     {
         navigator.geolocation.getCurrentPosition(
@@ -64,11 +67,16 @@ function here_and_now(fetch_after = false)
                 if (fetch_after)
                     document.getElementById("fetch_model_btn").click();
             },
-            () => set_location(52, 6)
+            () =>
+            {
+                document.getElementById("plot_spinner").style.display = "none";
+                set_location(52, 6);
+            }
         );
     }
     else
     {
+        document.getElementById("plot_spinner").style.display = "none";
         set_location(52, 6);
     }
 }

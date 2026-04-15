@@ -536,10 +536,13 @@ document.getElementById("fetch_sounding_btn").addEventListener("click", () =>
 
     if (!station || !date) return;
 
+    const spinner = document.getElementById("plot_spinner");
+    spinner.style.display = "";
+
     fetch(`/api/radiosonde_sounding?station=${station}&date=${date}&hour=${hour}`)
         .then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail); }); return r.json(); })
-        .then(data => set_obs_sounding(data))
-        .catch(err => alert("Failed to fetch sounding. " + err.message));
+        .then(data => { spinner.style.display = "none"; set_obs_sounding(data); })
+        .catch(err => { spinner.style.display = "none"; alert("Failed to fetch sounding. " + err.message); });
 });
 
 document.getElementById("match_profile_btn").addEventListener("click", () =>
