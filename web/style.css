@@ -385,32 +385,14 @@ main {
 #world_map {
     width: 100%;
     height: 100%;
-    display: block;
     cursor: crosshair;
-}
-
-#world_map .map-sphere {
-    fill: #e7f0f7;
-    stroke: #888;
-    stroke-width: 0.5;
-}
-
-#world_map .map-graticule {
-    fill: none;
-    stroke: #cdd6dd;
-    stroke-width: 0.5;
-}
-
-#world_map .map-country {
-    fill: #d4dccd;
-    stroke: #777;
-    stroke-width: 0.4;
 }
 
 .map-cancel-btn {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
+    z-index: 1000;
     display: flex;
     align-items: center;
     gap: 0.3rem;
@@ -436,7 +418,9 @@ main {
 .map-hint {
     position: absolute;
     top: 0.5rem;
-    left: 0.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
     padding: 0.35rem 0.65rem;
     background: rgba(255,255,255,0.9);
     border: 1px solid var(--color-border);

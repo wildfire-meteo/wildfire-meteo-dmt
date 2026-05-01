@@ -88,44 +88,25 @@ function here_and_now(fetch_after = false)
 
 document.getElementById("here_and_now_btn").addEventListener("click", () => here_and_now(true));
 
-let _world_topology = null;
+let _leaflet_map = null;
+let _leaflet_marker = null;
 
-async function render_world_map()
+function init_leaflet_map()
 {
-    const container = document.getElementById("map_container");
-    const svg = d3.select("#world_map");
-    const width  = container.clientWidth;
-    const height = container.clientHeight;
+    _leaflet_map = L.map("world_map", { worldCopyJump: true }).setView([20, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(_leaflet_map);
 
-    svg.selectAll("*").remove();
-    svg.attr("viewBox", `0 0 ${width} ${height}`);
-
-    const sphere = { type: "Sphere" };
-    const projection = d3.geoNaturalEarth1().fitSize([width, height], sphere);
-    const path = d3.geoPath(projection);
-
-    svg.append("path").datum(sphere).attr("class", "map-sphere").attr("d", path);
-    svg.append("path").datum(d3.geoGraticule()()).attr("class", "map-graticule").attr("d", path);
-
-    if (!_world_topology)
-        _world_topology = await fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json").then(r => r.json());
-
-    const countries = topojson.feature(_world_topology, _world_topology.objects.countries);
-    svg.append("g")
-        .selectAll("path")
-        .data(countries.features)
-        .join("path")
-        .attr("class", "map-country")
-        .attr("d", path);
-
-    svg.on("click", (event) =>
+    _leaflet_map.on("click", (e) =>
     {
-        const [x, y] = d3.pointer(event);
-        const coords = projection.invert([x, y]);
-        if (!coords) return;
-        const [lon, lat] = coords;
-        if (isNaN(lon) || isNaN(lat)) return;
-        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+        const lat = e.latlng.lat;
+        const lon = ((e.latlng.lng + 540) % 360) - 180;
+        if (_leaflet_marker)
+            _leaflet_marker.setLatLng([lat, lon]);
+        else
+            _leaflet_marker = L.marker([lat, lon]).addTo(_leaflet_map);
         hide_map();
         set_location(lat.toFixed(4), lon.toFixed(4));
         document.getElementById("plot_spinner").style.display = "";
@@ -133,11 +114,41 @@ async function render_world_map()
     });
 }
 
+function center_map_on_current_inputs()
+{
+    const lat = parseFloat(document.getElementById("lat_input").value);
+    const lon = parseFloat(document.getElementById("lon_input").value);
+    if (!isNaN(lat) && !isNaN(lon))
+    {
+        _leaflet_map.setView([lat, lon], 6);
+        if (_leaflet_marker)
+            _leaflet_marker.setLatLng([lat, lon]);
+        else
+            _leaflet_marker = L.marker([lat, lon]).addTo(_leaflet_map);
+        return true;
+    }
+    return false;
+}
+
 function show_map()
 {
     document.getElementById("skewt").style.display = "none";
     document.getElementById("map_container").style.display = "";
-    render_world_map();
+
+    if (!_leaflet_map)
+        init_leaflet_map();
+
+    setTimeout(() =>
+    {
+        _leaflet_map.invalidateSize();
+        if (!center_map_on_current_inputs() && navigator.geolocation)
+        {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => _leaflet_map.setView([pos.coords.latitude, pos.coords.longitude], 6),
+                () => {}
+            );
+        }
+    }, 0);
 }
 
 function hide_map()
