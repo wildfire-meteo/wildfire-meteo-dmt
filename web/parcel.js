@@ -139,9 +139,9 @@ export function calc_entraining_parcel(
     qt_p[0]    = qt_e[0]    + fire_multiplier * dq_plume_s;
 
     let { T, ql, qi } = sat_adjust(theta_p[0], qt_p[0], p_e[0]);
-    thetav_p[0] = virtual_temp(theta_p[0], qt_p[0], ql, qi);
     T_p[0]      = T;
     Tv_p[0]     = virtual_temp(T, qt_p[0], ql, qi);
+    thetav_p[0] = Tv_p[0]/exner_e[0];
     area_p[0]   = area_plume_s;
     w_p[0]      = 0.1;
     mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
@@ -163,14 +163,14 @@ export function calc_entraining_parcel(
         qt_p[i]    = qt_p[i-1]    - ent_p[i-1] * (qt_p[i-1]    - qt_e[i-1])    / mf_p[i-1] * dz;
 
         ({ T, ql, qi } = sat_adjust(theta_p[i], qt_p[i], p_e[i]));
-        thetav_p[i] = virtual_temp(theta_p[i], qt_p[i], ql, qi);
         T_p[i]      = T;
         Tv_p[i]     = virtual_temp(T, qt_p[i], ql, qi);
+        thetav_p[i] = Tv_p[i] / exner_e[i];
 
         if (ql > 0 || qi > 0)
             type_p[i] = 1;
 
-        const buoy = g / thetav_e[i-1] * (thetav_p[i-1] - thetav_e[i-1]);
+        const buoy = g / thetav_e[i] * (thetav_p[i] - thetav_e[i]);
         const w2   = w_p[i-1]**2 + 2 * (a_w * buoy - b_w * epsi * w_p[i-1]**2) * dz;
         w_p[i]     = Math.sqrt(Math.max(0, w2));
 

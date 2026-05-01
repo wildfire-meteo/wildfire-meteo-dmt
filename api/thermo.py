@@ -149,7 +149,7 @@ def virtual_temp(T, qt, ql=0, qi=0):
     float or np.ndarray
         Virtual temperature in K.
     """
-    return T * (1 - (1 - Rv/Rd) * qt - Rv/Rd * (ql + qi))
+    return T * (1 + (Rv/Rd - 1) * qt - Rv/Rd * (ql + qi))
 
 
 def dqsatdT(T, p):

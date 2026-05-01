@@ -76,7 +76,7 @@ export function dqsatdT(T, p)
 
 export function virtual_temp(T, qt, ql=0, qi=0)
 {
-    return T * (1 - (1 - Rv/Rd) * qt - Rv/Rd * (ql + qi));
+    return T * (1 + (Rv/Rd - 1) * qt - Rv/Rd * (ql + qi));
 }
 
 
