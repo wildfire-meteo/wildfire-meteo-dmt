@@ -24,8 +24,10 @@
         <title>Wildfire meteo analysis tool</title>
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap">
         <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
         <link rel="stylesheet" href="style.css">
         <script src="https://d3js.org/d3.v7.min.js"></script>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
     </head>
 
@@ -58,6 +60,9 @@
                         </label>
                         <button id="here_and_now_btn">
                             <span class="material-icons">my_location</span> Here and now
+                        </button>
+                        <button id="select_on_map_btn">
+                            <span class="material-icons">public</span> Select on map
                         </button>
                     </div>
                 </details>
@@ -97,6 +102,13 @@
             <div class="plot-container">
                 <section class="plot">
                     <svg id="skewt" style="width:100%;height:100%;display:block;"></svg>
+                    <div id="map_container" style="display:none;">
+                        <div id="world_map"></div>
+                        <button id="map_cancel_btn" class="map-cancel-btn">
+                            <span class="material-icons">close</span> Cancel
+                        </button>
+                        <div class="map-hint">Click on the map to pick a location</div>
+                    </div>
                     <div id="plot_spinner" class="plot-spinner" style="display:none;">
                         <div class="spinner"></div>
                     </div>

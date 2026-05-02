@@ -88,6 +88,84 @@ function here_and_now(fetch_after = false)
 
 document.getElementById("here_and_now_btn").addEventListener("click", () => here_and_now(true));
 
+let _leaflet_map = null;
+let _leaflet_marker = null;
+
+function init_leaflet_map()
+{
+    _leaflet_map = L.map("world_map", { worldCopyJump: true }).setView([20, 0], 2);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(_leaflet_map);
+
+    _leaflet_map.on("click", (e) =>
+    {
+        const lat = e.latlng.lat;
+        const lon = ((e.latlng.lng + 540) % 360) - 180;
+        if (_leaflet_marker)
+            _leaflet_marker.setLatLng([lat, lon]);
+        else
+            _leaflet_marker = L.marker([lat, lon]).addTo(_leaflet_map);
+        hide_map();
+        set_location(lat.toFixed(4), lon.toFixed(4));
+        document.getElementById("plot_spinner").style.display = "";
+        document.getElementById("fetch_model_btn").click();
+    });
+}
+
+function center_map_on_current_inputs()
+{
+    const lat = parseFloat(document.getElementById("lat_input").value);
+    const lon = parseFloat(document.getElementById("lon_input").value);
+    if (!isNaN(lat) && !isNaN(lon))
+    {
+        _leaflet_map.setView([lat, lon], 6);
+        if (_leaflet_marker)
+            _leaflet_marker.setLatLng([lat, lon]);
+        else
+            _leaflet_marker = L.marker([lat, lon]).addTo(_leaflet_map);
+        return true;
+    }
+    return false;
+}
+
+function show_map()
+{
+    document.getElementById("skewt").style.display = "none";
+    document.getElementById("map_container").style.display = "";
+
+    if (!_leaflet_map)
+        init_leaflet_map();
+
+    setTimeout(() =>
+    {
+        _leaflet_map.invalidateSize();
+        if (!center_map_on_current_inputs() && navigator.geolocation)
+        {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => _leaflet_map.setView([pos.coords.latitude, pos.coords.longitude], 6),
+                () => {}
+            );
+        }
+    }, 0);
+}
+
+function hide_map()
+{
+    document.getElementById("map_container").style.display = "none";
+    document.getElementById("skewt").style.display = "";
+}
+
+document.getElementById("select_on_map_btn").addEventListener("click", show_map);
+document.getElementById("map_cancel_btn").addEventListener("click", hide_map);
+
+document.addEventListener("keydown", (e) =>
+{
+    if (e.key === "Escape" && document.getElementById("map_container").style.display !== "none")
+        hide_map();
+});
+
 for (const id of ["lat_input", "lon_input"])
     document.getElementById(id).addEventListener("input", () => { reset_case_select(); fetch_nearest_stations(); });
 
