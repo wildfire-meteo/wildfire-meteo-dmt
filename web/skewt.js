@@ -16,10 +16,11 @@
 
 import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
 import { exner, qsat } from "./thermo.js";
+import { draw_wind_barb } from "./wind_barbs.js";
 
 const svg = d3.select("#skewt");
 
-const margin = { top: 30, right: 30, bottom: 65, left: 70 };
+const margin = { top: 30, right: 48, bottom: 65, left: 70 };
 
 let current_zoom = d3.zoomIdentity;
 
@@ -115,6 +116,8 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             theta:  data.theta[current_time],
             thetav: data.thetav[current_time],
             qt:     data.qt[current_time],
+            ws:     data.ws[current_time],
+            wd:     data.wd[current_time],
         };
 
         const sfc_idx = data.p_hpa.indexOf(Math.max(...data.p_hpa));
@@ -143,6 +146,8 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
         theta:  model_forecast.theta[current_time],
         thetav: model_forecast.thetav[current_time],
         qt:     model_forecast.qt[current_time],
+        ws:     model_forecast.ws[current_time],
+        wd:     model_forecast.wd[current_time],
     };
 
     draw_skewt();
@@ -518,6 +523,17 @@ function draw_skewt()
                 .style("font-size", font_size)
                 .style("fill", "#333")
                 .text(item.label);
+        });
+    }
+
+    if (model_sounding && model_sounding.ws)
+    {
+        const ms_to_kts = 1.94384;
+        model_sounding.p_hpa.forEach((p, i) =>
+        {
+            draw_wind_barb(g, W, y(p),
+                model_sounding.ws[i] * ms_to_kts,
+                model_sounding.wd[i]);
         });
     }
 
