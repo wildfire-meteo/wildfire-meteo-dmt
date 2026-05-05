@@ -15,10 +15,10 @@
 //
 
 // Meteorological wind barb constants (pixels).
-const STAFF_LEN     = 35;   // total staff length
-const BARB_LEN      = 14;   // full barb length
-const BARB_SPACING  =  6;   // spacing between barbs along staff
-const PENNANT_WIDTH =  8;   // pennant extent along staff
+const STAFF_LEN     = 26;   // total staff length
+const BARB_LEN      = 10;   // full barb length
+const BARB_SPACING  =  5;   // spacing between barbs along staff
+const PENNANT_WIDTH =  6;   // pennant extent along staff
 const BARB_ANGLE    = 60;   // degrees from staff (right-hand side, NH convention)
 
 const _sin_a = Math.sin(BARB_ANGLE * Math.PI / 180);
