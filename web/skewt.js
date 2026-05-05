@@ -551,14 +551,17 @@ function draw_skewt()
 
     if (model_sounding && model_sounding.ws)
     {
-        const ms_to_kts = 1.94384;
+        const ms_to_kts  = 1.94384;
+        const barb_scale = Math.min(1, H / 600);
         model_sounding.p_hpa.forEach((p, i) =>
         {
             // In the 900–1000 hPa band keep only the 50 hPa grid (1000, 950, 900).
             if (p > 900 && p % 50 !== 0) return;
             draw_wind_barb(g, W, y(p),
                 model_sounding.ws[i] * ms_to_kts,
-                model_sounding.wd[i]);
+                model_sounding.wd[i],
+                "black",
+                barb_scale);
         });
     }
 

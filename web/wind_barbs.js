@@ -14,12 +14,13 @@
 // limitations under the License.
 //
 
-// Meteorological wind barb constants (pixels).
-const STAFF_LEN     = 26;   // total staff length
-const BARB_LEN      = 10;   // full barb length
-const BARB_SPACING  =  5;   // spacing between barbs along staff
-const PENNANT_WIDTH =  6;   // pennant extent along staff
-const BARB_ANGLE    = 60;   // degrees from staff (right-hand side, NH convention)
+const STAFF_LEN  = 26;   // reference staff length for full-screen desktop (pixels)
+const BARB_ANGLE = 60;   // degrees from staff (right-hand side, NH convention)
+
+// All other dimensions are derived as fixed ratios of STAFF_LEN.
+const BARB_LEN_R      = 0.40;   // full barb length  (14/35 of original)
+const BARB_SPACING_R  = 0.17;   // barb spacing
+const PENNANT_WIDTH_R = 0.23;   // pennant extent along staff
 
 const _sin_a = Math.sin(BARB_ANGLE * Math.PI / 180);
 const _cos_a = Math.cos(BARB_ANGLE * Math.PI / 180);
@@ -33,11 +34,16 @@ const _cos_a = Math.cos(BARB_ANGLE * Math.PI / 180);
 //   speed_kts  – wind speed in knots
 //   dir_deg    – wind direction, meteorological (degrees from north, clockwise)
 //   color      – stroke/fill color (default "black")
+//   scale      – size multiplier relative to full-screen desktop (default 1)
 //
 // Encoding: half-line = 5 kt, full line = 10 kt, filled triangle = 50 kt.
 // The staff points toward the direction the wind is blowing FROM.
-export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black")
+export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black", scale = 1)
 {
+    const sl = STAFF_LEN * scale;
+    const bl = sl * BARB_LEN_R;
+    const bs = sl * BARB_SPACING_R;
+    const pw = sl * PENNANT_WIDTH_R;
     const lw = 1.5;
 
     // Canonical orientation: staff points up (north). rotate(dir_deg) gives
@@ -48,22 +54,22 @@ export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black")
     // Calm: two concentric circles, no staff.
     if (speed_kts < 2.5)
     {
-        barb_g.append("circle").attr("r", 4)
+        barb_g.append("circle").attr("r", 4 * scale)
             .attr("fill", "none").attr("stroke", color).attr("stroke-width", lw);
-        barb_g.append("circle").attr("r", 7)
+        barb_g.append("circle").attr("r", 7 * scale)
             .attr("fill", "none").attr("stroke", color).attr("stroke-width", lw);
         return;
     }
 
-    // Staff: calm end at origin, tip at (0, -STAFF_LEN).
+    // Staff: calm end at origin, tip at (0, -sl).
     barb_g.append("line")
         .attr("x1", 0).attr("y1", 0)
-        .attr("x2", 0).attr("y2", -STAFF_LEN)
+        .attr("x2", 0).attr("y2", -sl)
         .attr("stroke", color).attr("stroke-width", lw);
 
     // Decompose speed into pennants (50 kt), full barbs (10 kt), half barbs (5 kt).
-    let remaining   = Math.round(speed_kts / 5) * 5;
-    const pennants  = Math.floor(remaining / 50); remaining -= pennants * 50;
+    let remaining    = Math.round(speed_kts / 5) * 5;
+    const pennants   = Math.floor(remaining / 50); remaining -= pennants * 50;
     const full_barbs = Math.floor(remaining / 10); remaining -= full_barbs * 10;
     const half_barbs = Math.floor(remaining /  5);
 
@@ -73,12 +79,12 @@ export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black")
     // Pennants (filled triangles). Two staff vertices + one apex.
     for (let i = 0; i < pennants; i++)
     {
-        const y0 = -STAFF_LEN + t;
-        const y1 = y0 + PENNANT_WIDTH;
+        const y0 = -sl + t;
+        const y1 = y0 + pw;
         barb_g.append("polygon")
-            .attr("points", `0,${y0} 0,${y1} ${BARB_LEN * _sin_a},${y0 + BARB_LEN * _cos_a}`)
+            .attr("points", `0,${y0} 0,${y1} ${bl * _sin_a},${y0 + bl * _cos_a}`)
             .attr("fill", color).attr("stroke", "none");
-        t += PENNANT_WIDTH + 1;
+        t += pw + 1;
     }
 
     // Small gap between pennants and barbs.
@@ -88,12 +94,12 @@ export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black")
     // Full barbs.
     for (let i = 0; i < full_barbs; i++)
     {
-        const y0 = -STAFF_LEN + t;
+        const y0 = -sl + t;
         barb_g.append("line")
             .attr("x1", 0).attr("y1", y0)
-            .attr("x2", BARB_LEN * _sin_a).attr("y2", y0 + BARB_LEN * _cos_a)
+            .attr("x2", bl * _sin_a).attr("y2", y0 + bl * _cos_a)
             .attr("stroke", color).attr("stroke-width", lw);
-        t += BARB_SPACING;
+        t += bs;
     }
 
     // Half barb. When it is the only feature, offset one spacing from the tip
@@ -101,11 +107,11 @@ export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black")
     if (half_barbs > 0)
     {
         if (pennants === 0 && full_barbs === 0)
-            t = BARB_SPACING;
-        const y0 = -STAFF_LEN + t;
+            t = bs;
+        const y0 = -sl + t;
         barb_g.append("line")
             .attr("x1", 0).attr("y1", y0)
-            .attr("x2", (BARB_LEN / 2) * _sin_a).attr("y2", y0 + (BARB_LEN / 2) * _cos_a)
+            .attr("x2", (bl / 2) * _sin_a).attr("y2", y0 + (bl / 2) * _cos_a)
             .attr("stroke", color).attr("stroke-width", lw);
     }
 }
