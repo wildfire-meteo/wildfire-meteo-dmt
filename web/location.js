@@ -89,6 +89,8 @@ document.getElementById("here_and_now_btn").addEventListener("click", () => here
 
 let _leaflet_map = null;
 let _leaflet_marker = null;
+let _pending_lat = null;
+let _pending_lon = null;
 
 function init_leaflet_map()
 {
@@ -100,16 +102,12 @@ function init_leaflet_map()
 
     _leaflet_map.on("click", (e) =>
     {
-        const lat = e.latlng.lat;
-        const lon = ((e.latlng.lng + 540) % 360) - 180;
+        _pending_lat = e.latlng.lat;
+        _pending_lon = ((e.latlng.lng + 540) % 360) - 180;
         if (_leaflet_marker)
-            _leaflet_marker.setLatLng([lat, lon]);
+            _leaflet_marker.setLatLng([_pending_lat, _pending_lon]);
         else
-            _leaflet_marker = L.marker([lat, lon]).addTo(_leaflet_map);
-        hide_map();
-        set_location(lat.toFixed(4), lon.toFixed(4));
-        document.getElementById("plot_spinner").style.display = "";
-        document.getElementById("fetch_model_btn").click();
+            _leaflet_marker = L.marker([_pending_lat, _pending_lon]).addTo(_leaflet_map);
     });
 }
 
@@ -131,6 +129,8 @@ function center_map_on_current_inputs()
 
 function show_map()
 {
+    _pending_lat = null;
+    _pending_lon = null;
     document.getElementById("skewt").style.display = "none";
     document.getElementById("map_container").style.display = "";
 
@@ -157,7 +157,26 @@ function hide_map()
 }
 
 document.getElementById("select_on_map_btn").addEventListener("click", show_map);
-document.getElementById("map_cancel_btn").addEventListener("click", hide_map);
+document.getElementById("map_ok_btn").addEventListener("click", () =>
+{
+    if (_pending_lat !== null && _pending_lon !== null)
+    {
+        hide_map();
+        set_location(_pending_lat.toFixed(4), _pending_lon.toFixed(4));
+        document.getElementById("plot_spinner").style.display = "";
+        document.getElementById("fetch_model_btn").click();
+        _pending_lat = null;
+        _pending_lon = null;
+    }
+    else
+        hide_map();
+});
+document.getElementById("map_cancel_btn").addEventListener("click", () =>
+{
+    _pending_lat = null;
+    _pending_lon = null;
+    hide_map();
+});
 
 document.addEventListener("keydown", (e) =>
 {
