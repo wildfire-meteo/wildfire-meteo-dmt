@@ -44,7 +44,7 @@ def get_static_lines(ktot=64):
     x0_isotherms      = np.arange(-120, 40.01, 10)
     x0_dry_adiabats   = np.arange( -40, 50.01, 10)
     x0_moist_adiabats = np.array([0, 5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 27.5])
-    x0_isohumes       = np.arange( -30, 30.01, 10)
+    r_isohumes        = np.array([0.5, 1, 2, 4, 8, 15, 30])  # g/kg
 
     # Isotherms: lines of constant absolute temperature.
     x = x0_isotherms + thrm.T0
@@ -58,13 +58,10 @@ def get_static_lines(ktot=64):
     x = x0_moist_adiabats + thrm.T0
     moist_adiabats = thrm.calc_moist_adiabat(x, p_moist)
 
-    # Isohumes: lines of constant specific humidity.
-    x = x0_isohumes + thrm.T0
-    q_isohumes = thrm.qsat(x, thrm.p0)
+    # Isohumes: lines of constant mixing ratio.
+    q_isohumes = r_isohumes / (1000 + r_isohumes)
     isohumes = thrm.dewpoint(q_isohumes[np.newaxis, :], p_isohumes[:, np.newaxis])
-
-    # Mixing ratio in g/kg for each isohume (used for labeling).
-    isohume_mixing_ratios = q_isohumes / (1 - q_isohumes) * 1000
+    isohume_mixing_ratios = r_isohumes.astype(float)
 
     return {
         "p_isotherms":            p_isotherms,

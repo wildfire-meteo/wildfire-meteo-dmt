@@ -228,7 +228,7 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
             .attr("x", x_pos)
             .attr("y", y_pos - 4)
             .attr("text-anchor", "middle")
-            .attr("font-size", "10px")
+            .attr("font-size", "12px")
             .attr("fill", "rgba(31,119,180,0.9)")
             .text(mixing_ratios[i].toFixed(1));
     });
