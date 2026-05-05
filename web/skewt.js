@@ -113,6 +113,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             T:      data.T[current_time],
             Td:     data.Td[current_time],
             z_agl:  data.z_agl[current_time],
+            z:      data.z[current_time],
             theta:  data.theta[current_time],
             thetav: data.thetav[current_time],
             qt:     data.qt[current_time],
@@ -143,6 +144,7 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
         T:      model_forecast.T[current_time],
         Td:     model_forecast.Td[current_time],
         z_agl:  model_forecast.z_agl[current_time],
+        z:      model_forecast.z[current_time],
         theta:  model_forecast.theta[current_time],
         thetav: model_forecast.thetav[current_time],
         qt:     model_forecast.qt[current_time],
@@ -196,6 +198,24 @@ function draw_isobars(chart, y, W)
             .attr("x2", W).attr("y2", y(p))
             .attr("stroke", "rgba(179,179,179,0.5)")
             .attr("stroke-width", 1);
+    });
+}
+
+function draw_height_labels(chart, y, p_hpa, z)
+{
+    const p_levels = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100];
+    p_levels.forEach(p =>
+    {
+        const i = p_hpa.indexOf(p);
+        if (i === -1) return;
+        const z_m = Math.round(z[i]);
+        chart.append("text")
+            .attr("x", 5)
+            .attr("y", y(p) - 3)
+            .attr("text-anchor", "start")
+            .attr("font-size", "11px")
+            .attr("fill", "#333")
+            .text(`${z_m} m`);
     });
 }
 
@@ -276,6 +296,9 @@ function draw_skewt()
 
     if (document.getElementById("show_isobars").checked)
         draw_isobars(chart, y, W);
+
+    if (model_sounding && model_sounding.z)
+        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z);
 
     if (bg_data)
     {
