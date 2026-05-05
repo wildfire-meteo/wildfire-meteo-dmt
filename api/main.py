@@ -45,7 +45,8 @@ def background():
         "isotherms":      _lines["isotherms"].T.tolist(),
         "dry_adiabats":   _lines["dry_adiabats"].T.tolist(),
         "moist_adiabats": _lines["moist_adiabats"].T.tolist(),
-        "isohumes":       _lines["isohumes"].T.tolist(),
+        "isohumes":               _lines["isohumes"].T.tolist(),
+        "isohume_mixing_ratios":  _lines["isohume_mixing_ratios"].tolist(),
     }
 
 
