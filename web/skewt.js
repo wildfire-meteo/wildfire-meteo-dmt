@@ -16,10 +16,11 @@
 
 import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
 import { exner, qsat } from "./thermo.js";
+import { draw_wind_barb } from "./wind_barbs.js";
 
 const svg = d3.select("#skewt");
 
-const margin = { top: 30, right: 30, bottom: 65, left: 70 };
+const margin = { top: 30, right: 48, bottom: 65, left: 70 };
 
 let current_zoom = d3.zoomIdentity;
 
@@ -112,9 +113,12 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             T:      data.T[current_time],
             Td:     data.Td[current_time],
             z_agl:  data.z_agl[current_time],
+            z:      data.z[current_time],
             theta:  data.theta[current_time],
             thetav: data.thetav[current_time],
             qt:     data.qt[current_time],
+            ws:     data.ws[current_time],
+            wd:     data.wd[current_time],
         };
 
         const sfc_idx = data.p_hpa.indexOf(Math.max(...data.p_hpa));
@@ -140,9 +144,12 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
         T:      model_forecast.T[current_time],
         Td:     model_forecast.Td[current_time],
         z_agl:  model_forecast.z_agl[current_time],
+        z:      model_forecast.z[current_time],
         theta:  model_forecast.theta[current_time],
         thetav: model_forecast.thetav[current_time],
         qt:     model_forecast.qt[current_time],
+        ws:     model_forecast.ws[current_time],
+        wd:     model_forecast.wd[current_time],
     };
 
     draw_skewt();
@@ -191,6 +198,24 @@ function draw_isobars(chart, y, W)
             .attr("x2", W).attr("y2", y(p))
             .attr("stroke", "rgba(179,179,179,0.5)")
             .attr("stroke-width", 1);
+    });
+}
+
+function draw_height_labels(chart, y, p_hpa, z)
+{
+    const p_levels = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100];
+    p_levels.forEach(p =>
+    {
+        const i = p_hpa.indexOf(p);
+        if (i === -1) return;
+        const z_m = Math.round(z[i]);
+        chart.append("text")
+            .attr("x", 5)
+            .attr("y", y(p) - 3)
+            .attr("text-anchor", "start")
+            .attr("font-size", "11px")
+            .attr("fill", "#333")
+            .text(`${z_m} m`);
     });
 }
 
@@ -271,6 +296,9 @@ function draw_skewt()
 
     if (document.getElementById("show_isobars").checked)
         draw_isobars(chart, y, W);
+
+    if (model_sounding && model_sounding.z)
+        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z);
 
     if (bg_data)
     {
@@ -518,6 +546,22 @@ function draw_skewt()
                 .style("font-size", font_size)
                 .style("fill", "#333")
                 .text(item.label);
+        });
+    }
+
+    if (model_sounding && model_sounding.ws)
+    {
+        const ms_to_kts  = 1.94384;
+        const barb_scale = Math.min(1, H / 600);
+        model_sounding.p_hpa.forEach((p, i) =>
+        {
+            // In the 900–1000 hPa band keep only the 50 hPa grid (1000, 950, 900).
+            if (p > 900 && p % 50 !== 0) return;
+            draw_wind_barb(g, W, y(p),
+                model_sounding.ws[i] * ms_to_kts,
+                model_sounding.wd[i],
+                "black",
+                barb_scale);
         });
     }
 
