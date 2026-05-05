@@ -51,12 +51,10 @@ export function draw_wind_barb(g, x, y, speed_kts, dir_deg, color = "black", sca
     const barb_g = g.append("g")
         .attr("transform", `translate(${x},${y}) rotate(${dir_deg})`);
 
-    // Calm: two concentric circles, no staff.
+    // Calm: single circle.
     if (speed_kts < 2.5)
     {
         barb_g.append("circle").attr("r", 4 * scale)
-            .attr("fill", "none").attr("stroke", color).attr("stroke-width", lw);
-        barb_g.append("circle").attr("r", 7 * scale)
             .attr("fill", "none").attr("stroke", color).attr("stroke-width", lw);
         return;
     }
