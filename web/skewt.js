@@ -351,6 +351,21 @@ function draw_skewt()
         const t_pts  = [sfc_pt_T,  ...lev_pts_T];
         const td_pts = [sfc_pt_Td, ...lev_pts_Td];
 
+        // Surface pressure line.
+        chart.append("line")
+            .attr("x1", 0).attr("y1", y(sfc_p_hpa))
+            .attr("x2", W).attr("y2", y(sfc_p_hpa))
+            .attr("stroke", "#666")
+            .attr("stroke-width", 1.5)
+            .attr("stroke-dasharray", "4,3");
+        chart.append("text")
+            .attr("x", W - 4)
+            .attr("y", y(sfc_p_hpa) - 3)
+            .attr("text-anchor", "end")
+            .attr("font-size", "11px")
+            .attr("fill", "#666")
+            .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
+
         function redraw_parcel()
         {
             chart.selectAll(".parcel-path").remove();
