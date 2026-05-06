@@ -43,13 +43,16 @@ function fetch_nearest_stations()
         });
 }
 
-function set_location(lat, lon)
+function set_location(lat, lon, reset_time = true)
 {
-    const now = new Date();
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
-    document.getElementById("date_input").value = now.toISOString().slice(0, 10);
-    document.getElementById("time_input").value = now.toISOString().slice(11, 16);
+    if (reset_time)
+    {
+        const now = new Date();
+        document.getElementById("date_input").value = now.toISOString().slice(0, 10);
+        document.getElementById("time_input").value = now.toISOString().slice(11, 16);
+    }
     reset_case_select();
     fetch_nearest_stations();
 }
@@ -162,7 +165,7 @@ document.getElementById("map_ok_btn").addEventListener("click", () =>
     if (_pending_lat !== null && _pending_lon !== null)
     {
         hide_map();
-        set_location(_pending_lat.toFixed(4), _pending_lon.toFixed(4));
+        set_location(_pending_lat.toFixed(4), _pending_lon.toFixed(4), false);
         document.getElementById("plot_spinner").style.display = "";
         document.getElementById("fetch_model_btn").click();
         _pending_lat = null;
