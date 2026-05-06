@@ -83,6 +83,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
     {
         spinner.style.display = "none";
         model_forecast = data;
+        document.getElementById("export_nc_btn").disabled = false;
 
         const time_str = document.getElementById("time_input").value;
         if (time_str)
@@ -130,6 +131,15 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("launch_parcel").disabled = false;
         draw_skewt();
     });
+});
+
+document.getElementById("export_nc_btn").addEventListener("click", () =>
+{
+    const lat   = document.getElementById("lat_input").value;
+    const lon   = document.getElementById("lon_input").value;
+    const date  = document.getElementById("date_input").value;
+    const model = document.getElementById("model_select").value;
+    window.location.href = `/api/model_sounding/export?lat=${lat}&lon=${lon}&model=${model}&date=${date}`;
 });
 
 document.getElementById("time_slider").addEventListener("input", (e) =>
