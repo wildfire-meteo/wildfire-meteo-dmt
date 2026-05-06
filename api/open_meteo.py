@@ -161,7 +161,11 @@ def get_model_sounding(lat, lon, model, date_str):
         Dataset with dims (time, p) in SI units.
     """
 
-    pressure_levs = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100, 70, 50, 30]
+    if model == 'ecmwf_ifs025' or model == 'ecmwf_aifs025_single':
+        pressure_levs = [1000, 925, 850, 700, 600, 500, 400, 300, 200, 150, 100, 50]
+    else:
+        pressure_levs = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200, 150, 100, 70, 50, 30]
+
     pressure_lev_vars = ['temperature', 'relative_humidity', 'wind_speed', 'wind_direction', 'geopotential_height']
     single_lev_vars = ['temperature_2m', 'dew_point_2m', 'precipitation', 'rain', 'showers', 'surface_pressure', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m']
 
