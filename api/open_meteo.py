@@ -181,8 +181,14 @@ def get_model_sounding(lat, lon, model, date_str):
 
     Td = thrm.dewpoint(qt, p[np.newaxis, :])
 
-    theta = meteo['temperature'] / thrm.exner(p[np.newaxis, :])
+    exn = thrm.exner(p[np.newaxis, :])
+    theta  = meteo['temperature'] / exn
     thetav = thrm.virtual_temp(theta, qt, ql=ql)
+    thetal = theta - thrm.Lv * ql / (thrm.cp * exn)
+
+    wd_rad = np.deg2rad(meteo['wind_direction'])
+    u = -meteo['wind_speed'] * np.sin(wd_rad)
+    v = -meteo['wind_speed'] * np.cos(wd_rad)
 
     z = meteo['geopotential_height']
     z_agl = z - z[:, 0:1]
@@ -190,7 +196,6 @@ def get_model_sounding(lat, lon, model, date_str):
     p_coord = ('time', 'p')
     coords  = {'time': meteo['time'], 'p': p}
 
-    # Return Xarray Dataset.
     return xr.Dataset({
         'z':      (p_coord, z),
         'z_agl':  (p_coord, z_agl),
@@ -199,8 +204,11 @@ def get_model_sounding(lat, lon, model, date_str):
         'rh':     (p_coord, rh),
         'ws':     (p_coord, meteo['wind_speed']),
         'wd':     (p_coord, meteo['wind_direction']),
+        'u':      (p_coord, u),
+        'v':      (p_coord, v),
         'qt':     (p_coord, qt),
         'ql':     (p_coord, ql),
         'theta':  (p_coord, theta),
-        'thetav': (p_coord, thetav)
+        'thetav': (p_coord, thetav),
+        'thetal': (p_coord, thetal),
     }, coords=coords)
