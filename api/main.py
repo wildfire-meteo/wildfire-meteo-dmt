@@ -17,9 +17,10 @@
 from pathlib import Path
 
 import io
+import tempfile
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import pandas as pd
@@ -78,6 +79,30 @@ def model_sounding(
         "theta":  ds["theta"].values.tolist(),
         "thetav": ds["thetav"].values.tolist(),
     }
+
+
+@app.get("/api/model_sounding/export")
+def model_sounding_export(
+    lat:   float = Query(...),
+    lon:   float = Query(...),
+    model: str   = Query(...),
+    date:  str   = Query(...),
+):
+    try:
+        ds = get_model_sounding(lat, lon, model, date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    filename = f"sounding_{model}_{lat}N_{lon}E_{date}.nc"
+    with tempfile.NamedTemporaryFile(suffix=".nc") as tmp:
+        ds.assign_coords(time=ds.indexes["time"].tz_localize(None)).to_netcdf(tmp.name)
+        content = Path(tmp.name).read_bytes()
+
+    return Response(
+        content=content,
+        media_type="application/x-netcdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/nearest_stations")
