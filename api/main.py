@@ -65,19 +65,22 @@ def model_sounding(
     p_pa = ds["p"].values
 
     return {
-        "p_hpa":  (p_pa / 100).tolist(),
-        "times":  pd.DatetimeIndex(ds["time"].values).strftime("%H:%M").tolist(),
-        "T":      ds["T"].values.tolist(),
-        "Td":     ds["Td"].values.tolist(),
-        "z":      ds["z"].values.tolist(),
-        "z_agl":  ds["z_agl"].values.tolist(),
-        "rh":     ds["rh"].values.tolist(),
-        "ws":     ds["ws"].values.tolist(),
-        "wd":     ds["wd"].values.tolist(),
-        "qt":     ds["qt"].values.tolist(),
-        "ql":     ds["ql"].values.tolist(),
-        "theta":  ds["theta"].values.tolist(),
-        "thetav": ds["thetav"].values.tolist(),
+        "p_hpa":            (p_pa / 100).tolist(),
+        "times":            pd.DatetimeIndex(ds["time"].values).strftime("%H:%M").tolist(),
+        "T":                ds["T"].values.tolist(),
+        "Td":               ds["Td"].values.tolist(),
+        "z":                ds["z"].values.tolist(),
+        "z_agl":            ds["z_agl"].values.tolist(),
+        "rh":               ds["rh"].values.tolist(),
+        "ws":               ds["ws"].values.tolist(),
+        "wd":               ds["wd"].values.tolist(),
+        "qt":               ds["qt"].values.tolist(),
+        "ql":               ds["ql"].values.tolist(),
+        "theta":            ds["theta"].values.tolist(),
+        "thetav":           ds["thetav"].values.tolist(),
+        "surface_pressure": (ds["surface_pressure"].values / 100).tolist(),  # Pa → hPa
+        "T_2m":             ds["T_2m"].values.tolist(),
+        "Td_2m":            ds["Td_2m"].values.tolist(),
     }
 
 

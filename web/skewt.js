@@ -16,7 +16,7 @@
 
 import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
 import { exner, qsat } from "./thermo.js";
-import { draw_wind_barb } from "./wind_barbs.js";
+import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
 
 const svg = d3.select("#skewt");
 
@@ -110,22 +110,24 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("time_section").style.display = "";
 
         model_sounding = {
-            p_hpa:  data.p_hpa,
-            T:      data.T[current_time],
-            Td:     data.Td[current_time],
-            z_agl:  data.z_agl[current_time],
-            z:      data.z[current_time],
-            theta:  data.theta[current_time],
-            thetav: data.thetav[current_time],
-            qt:     data.qt[current_time],
-            ws:     data.ws[current_time],
-            wd:     data.wd[current_time],
+            p_hpa:               data.p_hpa,
+            T:                   data.T[current_time],
+            Td:                  data.Td[current_time],
+            z_agl:               data.z_agl[current_time],
+            z:                   data.z[current_time],
+            theta:               data.theta[current_time],
+            thetav:              data.thetav[current_time],
+            qt:                  data.qt[current_time],
+            ws:                  data.ws[current_time],
+            wd:                  data.wd[current_time],
+            surface_pressure_hpa: data.surface_pressure[current_time],
+            T_2m:                data.T_2m[current_time],
+            Td_2m:               data.Td_2m[current_time],
         };
 
-        const sfc_idx = data.p_hpa.indexOf(Math.max(...data.p_hpa));
-        parcel_starts = data.T.map((T_arr, ti) => ({
-            T:  T_arr[sfc_idx],
-            Td: data.Td[ti][sfc_idx],
+        parcel_starts = data.T_2m.map((T_2m, ti) => ({
+            T:  T_2m,
+            Td: data.Td_2m[ti],
         }));
 
         document.getElementById("launch_parcel").disabled = false;
@@ -150,16 +152,19 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     document.getElementById("time_label").textContent = model_forecast.times[current_time] + " UTC";
 
     model_sounding = {
-        p_hpa:  model_forecast.p_hpa,
-        T:      model_forecast.T[current_time],
-        Td:     model_forecast.Td[current_time],
-        z_agl:  model_forecast.z_agl[current_time],
-        z:      model_forecast.z[current_time],
-        theta:  model_forecast.theta[current_time],
-        thetav: model_forecast.thetav[current_time],
-        qt:     model_forecast.qt[current_time],
-        ws:     model_forecast.ws[current_time],
-        wd:     model_forecast.wd[current_time],
+        p_hpa:               model_forecast.p_hpa,
+        T:                   model_forecast.T[current_time],
+        Td:                  model_forecast.Td[current_time],
+        z_agl:               model_forecast.z_agl[current_time],
+        z:                   model_forecast.z[current_time],
+        theta:               model_forecast.theta[current_time],
+        thetav:              model_forecast.thetav[current_time],
+        qt:                  model_forecast.qt[current_time],
+        ws:                  model_forecast.ws[current_time],
+        wd:                  model_forecast.wd[current_time],
+        surface_pressure_hpa: model_forecast.surface_pressure[current_time],
+        T_2m:                model_forecast.T_2m[current_time],
+        Td_2m:               model_forecast.Td_2m[current_time],
     };
 
     draw_skewt();
@@ -211,11 +216,12 @@ function draw_isobars(chart, y, W)
     });
 }
 
-function draw_height_labels(chart, y, p_hpa, z)
+function draw_height_labels(chart, y, p_hpa, z, sfc_p_hpa)
 {
     const p_levels = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100];
     p_levels.forEach(p =>
     {
+        if (sfc_p_hpa !== undefined && p > sfc_p_hpa) return;
         const i = p_hpa.indexOf(p);
         if (i === -1) return;
         const z_m = Math.round(z[i]);
@@ -308,7 +314,7 @@ function draw_skewt()
         draw_isobars(chart, y, W);
 
     if (model_sounding && model_sounding.z)
-        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z);
+        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z, model_sounding.surface_pressure_hpa);
 
     if (bg_data)
     {
@@ -332,8 +338,33 @@ function draw_skewt()
             .x(d => x(d[0]))
             .y(d => y(d[1]));
 
-        const t_pts  = model_sounding.T.map( (t, i) => [skew_transform(t,  model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]);
-        const td_pts = model_sounding.Td.map((t, i) => [skew_transform(t,  model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]);
+        const sfc_p_hpa = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
+
+        // Surface data point (2 m values at actual surface pressure).
+        const sfc_pt_T  = [skew_transform(model_sounding.T_2m  ?? model_sounding.T[0],  sfc_p_hpa), sfc_p_hpa];
+        const sfc_pt_Td = [skew_transform(model_sounding.Td_2m ?? model_sounding.Td[0], sfc_p_hpa), sfc_p_hpa];
+
+        // Pressure-level points filtered to above (or at) the surface.
+        const lev_pts_T  = model_sounding.T.map( (t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]).filter(d => d[1] <= sfc_p_hpa);
+        const lev_pts_Td = model_sounding.Td.map((t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]).filter(d => d[1] <= sfc_p_hpa);
+
+        const t_pts  = [sfc_pt_T,  ...lev_pts_T];
+        const td_pts = [sfc_pt_Td, ...lev_pts_Td];
+
+        // Surface pressure line.
+        chart.append("line")
+            .attr("x1", 0).attr("y1", y(sfc_p_hpa))
+            .attr("x2", W).attr("y2", y(sfc_p_hpa))
+            .attr("stroke", "#666")
+            .attr("stroke-width", 1.5)
+            .attr("stroke-dasharray", "4,3");
+        chart.append("text")
+            .attr("x", W - 4 - STAFF_LEN * Math.min(1, H / 600))
+            .attr("y", y(sfc_p_hpa) - 3)
+            .attr("text-anchor", "end")
+            .attr("font-size", "11px")
+            .attr("fill", "#666")
+            .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
 
         function redraw_parcel()
         {
@@ -358,56 +389,74 @@ function draw_skewt()
                         .attr("d", parcel_line);
                 });
 
-            const mode = document.getElementById("parcel_mode").value;
+            const mode      = document.getElementById("parcel_mode").value;
+            const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
+            const p_sfc_pa  = (model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa)) * 100;
+            const T_s       = parcel_starts[current_time].T;
+            const Td_s      = parcel_starts[current_time].Td;
+
+            // Index of the first pressure level strictly above the surface.
+            // p_pa_all is sorted descending (highest pressure first).
+            const idx_above = p_pa_all.findIndex(p => p < p_sfc_pa);
 
             if (mode === "non_entraining")
             {
-                const p_pa = model_sounding.p_hpa.map(p => p * 100);
+                // Parcel grid: surface pressure + all levels above it.
+                const p_above = idx_above === -1 ? [] : p_pa_all.slice(idx_above);
+                const p_parcel = [p_sfc_pa, ...p_above].sort((a, b) => b - a);
 
-                const p_pa_desc = [...p_pa].sort((a, b) => b - a);
-
-                const parcel = calc_non_entraining_parcel(
-                    parcel_starts[current_time].T,
-                    parcel_starts[current_time].Td,
-                    p_pa_desc[0],
-                    p_pa_desc,
-
-                );
+                const parcel = calc_non_entraining_parcel(T_s, Td_s, p_sfc_pa, p_parcel);
 
                 draw_parcel_segments([
-                    [parcel.p_dry,    parcel.T_dry],
+                    [parcel.p_dry,     parcel.T_dry],
                     [parcel.p_isohume, parcel.T_isohume],
-                    [parcel.p_moist,  parcel.T_moist],
+                    [parcel.p_moist,   parcel.T_moist],
                 ]);
             }
             else if (mode === "entraining")
             {
+                if (idx_above === -1) return;
+
+                // Interpolate z_agl at the surface pressure for height referencing.
+                let z_sfc_agl;
+                if (idx_above === 0)
+                {
+                    z_sfc_agl = 0;
+                }
+                else
+                {
+                    const i0 = idx_above - 1;
+                    const i1 = idx_above;
+                    const lp0 = Math.log(p_pa_all[i0]);
+                    const lp1 = Math.log(p_pa_all[i1]);
+                    const t   = (Math.log(p_sfc_pa) - lp0) / (lp1 - lp0);
+                    z_sfc_agl = model_sounding.z_agl[i0] + t * (model_sounding.z_agl[i1] - model_sounding.z_agl[i0]);
+                }
+
+                // Environment: surface point followed by all levels above the surface.
+                const p_env  = [p_sfc_pa, ...p_pa_all.slice(idx_above)];
+                const T_env  = [model_sounding.T_2m  ?? model_sounding.T[idx_above],  ...model_sounding.T.slice(idx_above)];
+                const Td_env = [model_sounding.Td_2m ?? model_sounding.Td[idx_above], ...model_sounding.Td.slice(idx_above)];
+                const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+
+                const T_env_sfc  = model_sounding.T_2m  ?? model_sounding.T[idx_above];
+                const Td_env_sfc = model_sounding.Td_2m ?? model_sounding.Td[idx_above];
+                const dtheta = T_s / exner(p_sfc_pa) - T_env_sfc / exner(p_sfc_pa);
+                const dq     = qsat(Td_s, p_sfc_pa) - qsat(Td_env_sfc, p_sfc_pa);
                 const area   = 10 ** +document.getElementById("fire_area").value;
-                const p_pa   = model_sounding.p_hpa.map(p => p * 100);
-                const p_sfc  = p_pa[0];
-                const T_s    = parcel_starts[current_time].T;
-                const Td_s   = parcel_starts[current_time].Td;
-                const dtheta = T_s / exner(p_sfc) - model_sounding.T[0] / exner(p_sfc);
-                const dq     = qsat(Td_s, p_sfc) - qsat(model_sounding.Td[0], p_sfc);
 
                 const parcel = calc_entraining_parcel(
-                    model_sounding.z_agl,
-                    model_sounding.T,
-                    model_sounding.Td,
-                    p_pa,
-                    dtheta,
-                    dq,
-                    area,
+                    z_env, T_env, Td_env, p_env,
+                    dtheta, dq, area,
                     { z_max: 12000 },
-
                 );
 
                 // T for the full ascent; Td only below LCL (where type == 0).
                 const lcl_idx = parcel.type.indexOf(1);
                 const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
                 draw_parcel_segments([
-                    [parcel.p,                  parcel.T],
-                    [parcel.p.slice(0, n_sub),  parcel.Td.slice(0, n_sub)],
+                    [parcel.p,                 parcel.T],
+                    [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
                 ]);
             }
         }
@@ -463,14 +512,13 @@ function draw_skewt()
              document.getElementById("launch_parcel").checked &&
              parcel_starts)
         {
-            const p_pa_desc = [...model_sounding.p_hpa].sort((a, b) => b - a);
-            const sfc_p_hpa = p_pa_desc[0];
+            const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
 
             const draw_parcel_marker = (get_T, set_T, color) =>
             {
                 const node = chart.append("circle")
-                    .attr("cx", x(skew_transform(get_T(), sfc_p_hpa)))
-                    .attr("cy", y(sfc_p_hpa))
+                    .attr("cx", x(skew_transform(get_T(), sfc_p_hpa_marker)))
+                    .attr("cy", y(sfc_p_hpa_marker))
                     .attr("r", 5)
                     .attr("fill", "white")
                     .attr("stroke", color)
@@ -480,8 +528,8 @@ function draw_skewt()
                 node.call(d3.drag()
                     .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
                     .on("drag",  function (event) {
-                        set_T(inv_skew_transform(x.invert(event.x), sfc_p_hpa));
-                        node.attr("cx", x(skew_transform(get_T(), sfc_p_hpa)));
+                        set_T(inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker));
+                        node.attr("cx", x(skew_transform(get_T(), sfc_p_hpa_marker)));
                         redraw_parcel();
                     })
                     .on("end",   function () { d3.select(this).style("cursor", "grab"); })
@@ -561,10 +609,12 @@ function draw_skewt()
 
     if (model_sounding && model_sounding.ws)
     {
-        const ms_to_kts  = 1.94384;
-        const barb_scale = Math.min(1, H / 600);
+        const ms_to_kts   = 1.94384;
+        const barb_scale  = Math.min(1, H / 600);
+        const barb_sfc_p  = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
         model_sounding.p_hpa.forEach((p, i) =>
         {
+            if (p > barb_sfc_p) return;  // below surface, skip
             // In the 900–1000 hPa band keep only the 50 hPa grid (1000, 950, 900).
             if (p > 900 && p % 50 !== 0) return;
             draw_wind_barb(g, W, y(p),
