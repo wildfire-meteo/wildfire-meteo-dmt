@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-const STAFF_LEN  = 26;   // reference staff length for full-screen desktop (pixels)
+export const STAFF_LEN  = 26;   // reference staff length for full-screen desktop (pixels)
 const BARB_ANGLE = 60;   // degrees from staff (right-hand side, NH convention)
 
 // All other dimensions are derived as fixed ratios of STAFF_LEN.

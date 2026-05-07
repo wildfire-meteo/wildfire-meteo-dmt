@@ -16,7 +16,7 @@
 
 import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
 import { exner, qsat } from "./thermo.js";
-import { draw_wind_barb } from "./wind_barbs.js";
+import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
 
 const svg = d3.select("#skewt");
 
@@ -359,7 +359,7 @@ function draw_skewt()
             .attr("stroke-width", 1.5)
             .attr("stroke-dasharray", "4,3");
         chart.append("text")
-            .attr("x", W - 4)
+            .attr("x", W - 4 - STAFF_LEN * Math.min(1, H / 600))
             .attr("y", y(sfc_p_hpa) - 3)
             .attr("text-anchor", "end")
             .attr("font-size", "11px")
