@@ -461,7 +461,7 @@ function draw_skewt()
             }
         }
 
-        function draw_skewt_profile(pts, color, source_T)
+        function draw_skewt_profile(pts, color, source_T, on_surface_drag)
         {
             const path = chart.append("path").datum(pts)
                 .attr("fill", "none")
@@ -483,6 +483,8 @@ function draw_skewt()
                     const i = model_sounding.p_hpa.indexOf(d[1]);
                     if (i !== -1)
                         source_T[i] = inv_skew_transform(d[0], d[1]);
+                    else if (on_surface_drag)
+                        on_surface_drag(inv_skew_transform(d[0], d[1]));
 
                     redraw_parcel();
                 })
@@ -505,8 +507,11 @@ function draw_skewt()
                     .call(drag);
         }
 
-        draw_skewt_profile(t_pts,  color_T,  model_sounding.T);
-        draw_skewt_profile(td_pts, color_Td, model_sounding.Td);
+        const update_T_sfc  = v => { model_sounding.T_2m  = v; if (parcel_starts) parcel_starts[current_time].T  = v; };
+        const update_Td_sfc = v => { model_sounding.Td_2m = v; if (parcel_starts) parcel_starts[current_time].Td = v; };
+
+        draw_skewt_profile(t_pts,  color_T,  model_sounding.T,  update_T_sfc);
+        draw_skewt_profile(td_pts, color_Td, model_sounding.Td, update_Td_sfc);
 
         if (!document.getElementById("edit_mode").checked &&
              document.getElementById("launch_parcel").checked &&
