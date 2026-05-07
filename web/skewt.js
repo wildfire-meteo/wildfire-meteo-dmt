@@ -131,6 +131,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         }));
 
         document.getElementById("launch_parcel").disabled = false;
+        document.getElementById("show_model_sounding").checked = true;
         draw_skewt();
     });
 });
@@ -189,6 +190,7 @@ document.getElementById("show_isohumes").addEventListener("change", () =>
 document.getElementById("label_isohumes").addEventListener("change", draw_skewt);
 document.getElementById("show_dry_adiabats").addEventListener("change", draw_skewt);
 document.getElementById("show_moist_adiabats").addEventListener("change", draw_skewt);
+document.getElementById("show_model_sounding").addEventListener("change", draw_skewt);
 document.getElementById("edit_mode").addEventListener("change", draw_skewt);
 
 document.getElementById("skew_factor").addEventListener("input", (e) =>
@@ -313,7 +315,9 @@ function draw_skewt()
     if (document.getElementById("show_isobars").checked)
         draw_isobars(chart, y, W);
 
-    if (model_sounding && model_sounding.z)
+    const show_model = document.getElementById("show_model_sounding").checked;
+
+    if (model_sounding && show_model && model_sounding.z)
         draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z, model_sounding.surface_pressure_hpa);
 
     if (bg_data)
@@ -332,7 +336,7 @@ function draw_skewt()
             draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     "rgba(13,145,70,0.5)");
     }
 
-    if (model_sounding)
+    if (model_sounding && show_model)
     {
         const line = d3.line()
             .x(d => x(d[0]))
@@ -567,11 +571,11 @@ function draw_skewt()
             .attr("stroke-width", 2.5).attr("stroke-dasharray", "6,3").attr("d", line);
     }
 
-    if (model_sounding || obs_sounding)
+    if ((model_sounding && show_model) || obs_sounding)
     {
         const legend_items = [];
 
-        if (model_sounding)
+        if (model_sounding && show_model)
         {
             legend_items.push({ label: "T (model)",  color: color_T  });
             legend_items.push({ label: "Td (model)", color: color_Td });
@@ -581,7 +585,7 @@ function draw_skewt()
             legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: "6,3" });
             legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
         }
-        if (model_sounding && document.getElementById("launch_parcel").checked)
+        if (model_sounding && show_model && document.getElementById("launch_parcel").checked)
             legend_items.push({ label: "Parcel", color: "#000", dashes: "6,3" });
 
         const line_len = 22;
@@ -607,7 +611,7 @@ function draw_skewt()
         });
     }
 
-    if (model_sounding && model_sounding.ws)
+    if (model_sounding && show_model && model_sounding.ws)
     {
         const ms_to_kts   = 1.94384;
         const barb_scale  = Math.min(1, H / 600);
