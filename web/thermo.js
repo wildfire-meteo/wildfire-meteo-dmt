@@ -108,7 +108,7 @@ export function sat_adjust(thl, qt, p)
 export function dTdp(T, p)
 {
     const qs = qsat(T, p);
-    return (T / p) * (Rd + Lv * qs / (Rd * T))
+    return (T / p) * (Rd + Lv * qs / T)
                    / (cp + Lv**2 * qs / (Rv * T**2));
 }
 
