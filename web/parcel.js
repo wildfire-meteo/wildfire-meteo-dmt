@@ -191,8 +191,15 @@ export function calc_entraining_parcel(
     // Cap Td at T: above LCL the parcel is saturated so Td == T.
     const Td_out = qt_out.map((q, k) => Math.min(dewpoint(q, p_out[k]), T_out[k]));
 
+    // Post-process: pseudoadiabatic T above LCL so the line follows background theta_e lines.
+    const lcl_k     = Array.from(type_p.slice(0, i)).indexOf(1);
+    const T_pseudo  = lcl_k === -1
+        ? T_out.slice()
+        : [...T_out.slice(0, lcl_k), ...calc_moist_adiabat(T_out[lcl_k], p_out.slice(lcl_k))];
+
     return {
         T:           T_out,
+        T_pseudo:    T_pseudo,
         Tv:          sl(Tv_p),
         Td:          Td_out,
         theta:       sl(theta_p),
