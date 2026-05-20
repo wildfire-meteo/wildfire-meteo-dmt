@@ -200,7 +200,7 @@ function sync_flux_controls()
 function update_flux_labels()
 {
     document.getElementById("fire_H_label").textContent =
-        `Sensible heat flux: ${fire_state.H.toFixed(0)} kW/m²`;
+        `Sensible heat flux: ${fire_state.H.toFixed(1)} kW/m²`;
     document.getElementById("fire_LE_label").textContent =
         `Latent heat flux: ${fire_state.LE.toFixed(1)} kW/m²`;
 }
