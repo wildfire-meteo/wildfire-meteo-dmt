@@ -166,8 +166,13 @@ export function calc_entraining_parcel(
         qt_p[i]     = qt_p[i-1]     - ent_p[i-1] * (qt_p[i-1]     - qt_e[i-1])    / mf_p[i-1] * dz;
 
         ({ T, ql, qi } = sat_adjust(thetal_p[i], qt_p[i], p_e[i]));
+
+        // Pseudoadiabatic: remove condensate so it does not accumulate in the parcel.
+        qt_p[i]    -= ql;
+        thetal_p[i] = T / exner_e[i];
+
         T_p[i]      = T;
-        Tv_p[i]     = virtual_temp(T, qt_p[i], ql, qi);
+        Tv_p[i]     = virtual_temp(T, qt_p[i], 0, 0);
         thetav_p[i] = Tv_p[i] / exner_e[i];
 
         if (ql > 0 || qi > 0)
