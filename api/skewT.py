@@ -42,7 +42,7 @@ def get_static_lines(ktot=64):
     # Start points (temperature in Celsius at 1000 hPa) of static lines.
     x0_isotherms      = np.arange(-120, 40.01, 10)
     x0_dry_adiabats   = np.arange( -40, 50.01, 10)
-    x0_moist_adiabats = np.array([0, 5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 27.5])
+    x0_moist_adiabats = np.array([0, 5, 10, 15, 20, 25, 30, 35, 40])
     r_isohumes        = np.array([0.5, 1, 2, 4, 8, 15, 30])  # g/kg
 
     # Isotherms: lines of constant absolute temperature.
