@@ -148,7 +148,7 @@ export function calc_entraining_parcel(
     const rho_e    = p_e.map((p, k) => p / (Rd * exner_e[k] * thetav_e[k]));
 
     // Allocate parcel arrays.
-    const theta_p  = new Array(n);
+    const thetal_p = new Array(n);
     const qt_p     = new Array(n);
     const thetav_p = new Array(n);
     const T_p      = new Array(n);
@@ -160,11 +160,12 @@ export function calc_entraining_parcel(
     const det_p    = new Array(n);
     const type_p   = new Array(n).fill(0);
 
-    // Initial conditions.
-    theta_p[0] = theta_e[0] + fire_multiplier * dtheta_plume_s;
-    qt_p[0]    = qt_e[0]    + fire_multiplier * dq_plume_s;
+    // Initial conditions. Fire perturbation is a dry heat excess (ql=0 at source),
+    // so thetal_p == theta_p at the surface.
+    thetal_p[0] = theta_e[0] + fire_multiplier * dtheta_plume_s;
+    qt_p[0]     = qt_e[0]    + fire_multiplier * dq_plume_s;
 
-    let { T, ql, qi } = sat_adjust(theta_p[0], qt_p[0], p_e[0]);
+    let { T, ql, qi } = sat_adjust(thetal_p[0], qt_p[0], p_e[0]);
     T_p[0]      = T;
     Tv_p[0]     = virtual_temp(T, qt_p[0], ql, qi);
     thetav_p[0] = Tv_p[0]/exner_e[0];
@@ -183,13 +184,21 @@ export function calc_entraining_parcel(
     let i = 1;
     for (; i < n; i++)
     {
-        mf_p[i]    = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
-        theta_p[i] = theta_p[i-1] - ent_p[i-1] * (theta_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
-        qt_p[i]    = qt_p[i-1]    - ent_p[i-1] * (qt_p[i-1]    - qt_e[i-1])    / mf_p[i-1] * dz;
+        mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
+        // TODO: use thetal_e here instead of theta_e. Currently theta_e == thetal_e only
+        // because the environment is assumed unsaturated (ql_e = 0). If the environment
+        // is saturated, entrained air carries condensate and theta_e > thetal_e.
+        thetal_p[i] = thetal_p[i-1] - ent_p[i-1] * (thetal_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
+        qt_p[i]     = qt_p[i-1]     - ent_p[i-1] * (qt_p[i-1]     - qt_e[i-1])    / mf_p[i-1] * dz;
 
-        ({ T, ql, qi } = sat_adjust(theta_p[i], qt_p[i], p_e[i]));
+        ({ T, ql, qi } = sat_adjust(thetal_p[i], qt_p[i], p_e[i]));
+
+        // Pseudoadiabatic: remove condensate so it does not accumulate in the parcel.
+        qt_p[i]    -= ql;
+        thetal_p[i] = T / exner_e[i];
+
         T_p[i]      = T;
-        Tv_p[i]     = virtual_temp(T, qt_p[i], ql, qi);
+        Tv_p[i]     = virtual_temp(T, qt_p[i], 0, 0);
         thetav_p[i] = Tv_p[i] / exner_e[i];
 
         if (ql > 0 || qi > 0)
@@ -228,7 +237,7 @@ export function calc_entraining_parcel(
         T_pseudo:    T_pseudo,
         Tv:          sl(Tv_p),
         Td:          Td_out,
-        theta:       sl(theta_p),
+        thetal:      sl(thetal_p),
         thetav:      sl(thetav_p),
         qt:          qt_out,
         area:        sl(area_p),

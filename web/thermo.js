@@ -79,9 +79,16 @@ export function virtual_temp(T, qt, ql=0, qi=0)
 }
 
 
-export function sat_adjust(thl, qt, p)
+export function thetal(theta, ql, T)
 {
-    const tl = thl * exner(p);
+    return theta * Math.exp(-Lv * ql / (cp * T));
+}
+
+
+export function sat_adjust(thetal, qt, p)
+{
+    const pi = exner(p);
+    const tl = thetal * pi;
     let qs = qsat(tl, p);
 
     if (qt - qs <= 0.0)
@@ -94,8 +101,10 @@ export function sat_adjust(thl, qt, p)
         niter++;
         tnr_old = tnr;
         qs = qsat(tnr, p);
-        const f       = tnr - tl - Lv / cp * (qt - qs);
-        const f_prime = 1.0 + Lv / cp * dqsatdT(tnr, p);
+        const ql    = qt - qs;
+        const exp_A = Math.exp(-Lv * ql / (cp * tnr));
+        const f       = tnr * exp_A - tl;
+        const f_prime = exp_A * (1.0 + Lv / cp * (dqsatdT(tnr, p) + ql / tnr));
         tnr -= f / f_prime;
     }
 
