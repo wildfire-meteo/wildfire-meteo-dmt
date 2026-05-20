@@ -184,7 +184,7 @@ def get_model_sounding(lat, lon, model, date_str):
     exn = thrm.exner(p[np.newaxis, :])
     theta  = meteo['temperature'] / exn
     thetav = thrm.virtual_temp(theta, qt, ql=ql)
-    thetal = theta - thrm.Lv * ql / (thrm.cp * exn)
+    thetal = thrm.thetal(theta, ql, meteo['temperature'])
 
     wd_rad = np.deg2rad(meteo['wind_direction'])
     u = -meteo['wind_speed'] * np.sin(wd_rad)

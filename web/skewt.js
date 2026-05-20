@@ -459,7 +459,7 @@ function draw_skewt()
                 const lcl_idx = parcel.type.indexOf(1);
                 const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
                 draw_parcel_segments([
-                    [parcel.p,                 parcel.T_pseudo],
+                    [parcel.p,                 parcel.T],
                     [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
                 ]);
             }

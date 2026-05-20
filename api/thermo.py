@@ -151,6 +151,27 @@ def virtual_temp(T, qt, ql=0, qi=0):
     return T * (1 + (Rv/Rd - 1) * qt - Rv/Rd * (ql + qi))
 
 
+def thetal(theta, ql, T):
+    """
+    Compute liquid-water potential temperature using the full exponential form.
+
+    Parameters:
+    ----------
+    theta : float or np.ndarray
+        Potential temperature in K.
+    ql : float or np.ndarray
+        Liquid water specific humidity in kg/kg.
+    T : float or np.ndarray
+        Temperature in K.
+
+    Returns:
+    -------
+    float or np.ndarray
+        Liquid-water potential temperature in K.
+    """
+    return theta * np.exp(-Lv * ql / (cp * T))
+
+
 def dqsatdT(T, p):
     """
     Compute d(qsat)/dT, consistent with the Bolton esat and qsat formulations.
@@ -174,7 +195,7 @@ def dqsatdT(T, p):
     return eps * p * des_dT / den ** 2
 
 
-def sat_adjust(thl, qt, p, use_ice=False):
+def sat_adjust(thetal, qt, p, use_ice=False):
     """
     Saturation adjustment (warm, liquid-only).
 
@@ -184,7 +205,7 @@ def sat_adjust(thl, qt, p, use_ice=False):
 
     Parameters:
     ----------
-    thl : float
+    thetal : float
         Liquid-water potential temperature [K].
     qt : float
         Total water specific humidity [kg/kg].
@@ -204,7 +225,8 @@ def sat_adjust(thl, qt, p, use_ice=False):
     qs : float
         Saturation specific humidity [kg/kg].
     """
-    tl = thl * exner(p)
+    pi = exner(p)
+    tl = thetal * pi
     qs = qsat(tl, p)
 
     if qt - qs <= 0.0:
@@ -216,9 +238,11 @@ def sat_adjust(thl, qt, p, use_ice=False):
     while abs(tnr - tnr_old) / tnr_old > 1e-5 and niter < 10:
         niter += 1
         tnr_old = tnr
-        qs = qsat(tnr, p)
-        f = tnr - tl - Lv / cp * (qt - qs)
-        f_prime = 1.0 + Lv / cp * dqsatdT(tnr, p)
+        qs    = qsat(tnr, p)
+        ql    = qt - qs
+        exp_A = np.exp(-Lv * ql / (cp * tnr))
+        f       = tnr * exp_A - tl
+        f_prime = exp_A * (1.0 + Lv / cp * (dqsatdT(tnr, p) + ql / tnr))
         tnr -= f / f_prime
 
     qs = qsat(tnr, p)
