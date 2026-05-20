@@ -17,6 +17,21 @@
 import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_temp } from "./thermo.js";
 
 
+// Entraining plume model constants.
+//   A_W, B_W   — buoyancy and entrainment scalings of w (Morton).
+//   FAC_ENT    — fractional entrainment coefficient.
+//   BETA       — entrainment-to-detrainment ratio.
+//   DZ_PLUME   — vertical integration step (m).
+//   H0_PLUME   — initial plume height above the source (m), used by the
+//                surface model to set w0.
+export const A_W      = 1.0;
+export const B_W      = 0.2;
+export const FAC_ENT  = 0.8;
+export const BETA     = 0.4;
+export const DZ_PLUME = 50;
+export const H0_PLUME = 20;
+
+
 function interp(x, xp, fp)
 {
     // Linear interpolation of fp at positions x, given sample points xp (ascending).
@@ -94,17 +109,29 @@ export function calc_non_entraining_parcel(T_sfc, Td_sfc, p_sfc, p)
 
 export function calc_entraining_parcel(
     z_env, T_env, Td_env, p_env,
-    dtheta_plume_s, dq_plume_s, area_plume_s,
+    dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s,
     {
         fire_multiplier = 1,
-        a_w    = 1.0,
-        b_w    = 0.2,
-        fac_ent = 0.8,
-        beta   = 0.4,
-        dz     = 50,
+        a_w    = A_W,
+        b_w    = B_W,
+        fac_ent = FAC_ENT,
+        beta   = BETA,
+        dz     = DZ_PLUME,
         z_max  = 5000,
     } = {})
 {
+    const w_eps = 1e-6;
+
+    // No buoyancy / momentum input from the surface — nothing to launch.
+    if (w0_plume_s < w_eps)
+        return {
+            T: [], T_pseudo: [], Tv: [], Td: [],
+            theta: [], thetav: [], qt: [],
+            area: [], w: [], mass_flux: [],
+            entrainment: [], detrainment: [], type: [],
+            z: [], p: [],
+        };
+
     // Build uniform height grid.
     const n = Math.floor(z_max / dz);
     const z = Array.from({ length: n }, (_, i) => i * dz);
@@ -142,7 +169,7 @@ export function calc_entraining_parcel(
     Tv_p[0]     = virtual_temp(T, qt_p[0], ql, qi);
     thetav_p[0] = Tv_p[0]/exner_e[0];
     area_p[0]   = area_plume_s;
-    w_p[0]      = 0.1;
+    w_p[0]      = w0_plume_s;
     mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
 
     // Entrainment settings (Morton formulation).
@@ -153,7 +180,6 @@ export function calc_entraining_parcel(
     det_p[0] = 0.0;
 
     // Integrate upward.
-    const w_eps = 1e-6;
     let i = 1;
     for (; i < n; i++)
     {
