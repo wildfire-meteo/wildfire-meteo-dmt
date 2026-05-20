@@ -19,8 +19,8 @@ import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_t
 
 export const A_W      = 1.0;
 export const B_W      = 0.2;
-export const FAC_ENT  = 0.8;
-export const BETA     = 0.4;
+export const FAC_ENT  = 1;  // Non-dimensional scaling of entrainment, from Eyken (2026)
+export const BETA     = 0.5; // The ratio fractional detrainment / fractional entrainment
 export const DZ_PLUME = 50;
 export const H0_PLUME = 20;
 
@@ -166,8 +166,8 @@ export function calc_entraining_parcel(
     mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
 
     // Entrainment settings (Morton formulation).
-    const epsi = fac_ent * beta / Math.sqrt(area_plume_s);
-    const delt = epsi / beta;
+    const epsi = fac_ent / Math.sqrt(area_plume_s);
+    const delt = epsi * beta;
 
     ent_p[0] = epsi * mf_p[0];
     det_p[0] = 0.0;
