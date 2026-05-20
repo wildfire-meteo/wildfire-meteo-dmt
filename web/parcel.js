@@ -17,13 +17,6 @@
 import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_temp } from "./thermo.js";
 
 
-// Entraining plume model constants.
-//   A_W, B_W   — buoyancy and entrainment scalings of w (Morton).
-//   FAC_ENT    — fractional entrainment coefficient.
-//   BETA       — entrainment-to-detrainment ratio.
-//   DZ_PLUME   — vertical integration step (m).
-//   H0_PLUME   — initial plume height above the source (m), used by the
-//                surface model to set w0.
 export const A_W      = 1.0;
 export const B_W      = 0.2;
 export const FAC_ENT  = 0.8;
@@ -122,7 +115,6 @@ export function calc_entraining_parcel(
 {
     const w_eps = 1e-6;
 
-    // No buoyancy / momentum input from the surface — nothing to launch.
     if (w0_plume_s < w_eps)
         return {
             T: [], T_pseudo: [], Tv: [], Td: [],

@@ -39,9 +39,6 @@ let obs_sounding = null;
 let model_forecast = null;
 let current_time = 0;
 
-// Global fire surface fluxes (kW/m²). The parcel's source-level dtheta, dq
-// and w0 are derived from these on every redraw via the surface model in
-// fire_surface.js. Defaults are zero — no fire, no plume.
 const fire_state = { H: 0, LE: 0 };
 
 const color_T   = "#EB0056";
@@ -424,7 +421,6 @@ function draw_skewt()
             const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
             const surf      = get_surface_state();
 
-            // Parcel source: ambient surface + fire-driven excesses.
             const T_s  = surf.T_env_sfc + surf.dtheta * surf.exner_sfc;
             const Td_s = dewpoint(surf.qt_sfc + surf.dq, surf.p_sfc_pa);
 
@@ -492,10 +488,6 @@ function draw_skewt()
             }
         }
 
-        // Derived surface-layer state, including the fire-driven excesses
-        // (dtheta, dq) and source-level vertical velocity w0 returned by the
-        // surface model. Recomputed each call so model edits (e.g. dragging
-        // T_2m in edit mode) propagate immediately.
         function get_surface_state()
         {
             const p_sfc_pa = (model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa)) * 100;
@@ -580,7 +572,6 @@ function draw_skewt()
         {
             const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
 
-            // Initial positions from the current (H, LE).
             const surf0  = get_surface_state();
             const T_marker_val  = () => {
                 const s = get_surface_state();
@@ -615,10 +606,6 @@ function draw_skewt()
                 Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
             };
 
-            // Drag inverts the surface model: keep the other channel's excess
-            // fixed, solve for new (H, LE). Dragging T below ambient or Td
-            // below saturation gives a non-positive excess, which the inversion
-            // clamps to (H, LE) = (0, 0) — i.e. the fire is "switched off".
             const make_drag = (axis) => d3.drag()
                 .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
                 .on("drag", function (event)
