@@ -16,7 +16,7 @@
 
 import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
-import { compute_fire_surface, invert_fire_surface } from "./fire_surface.js";
+import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
 
 const svg = d3.select("#skewt");
@@ -39,7 +39,7 @@ let obs_sounding = null;
 let model_forecast = null;
 let current_time = 0;
 
-const fire_state = { H: 0, LE: 0 };
+const fire_state = { dtheta: 0, dq: 0 };
 
 const color_T   = "#EB0056";
 const color_Td  = "#0056EB";
@@ -179,30 +179,38 @@ document.getElementById("fire_area").addEventListener("input", (e) =>
 });
 document.getElementById("fire_H").addEventListener("input", (e) =>
 {
-    fire_state.H = +e.target.value;
-    update_flux_labels();
+    const base = get_surface_base();
+    if (base)
+        fire_state.dtheta = dtheta_from_H(+e.target.value * 1e3, base.rho_sfc, base.thetav_sfc);
+    sync_flux_controls();
     draw_skewt();
 });
 document.getElementById("fire_LE").addEventListener("input", (e) =>
 {
-    fire_state.LE = +e.target.value;
-    update_flux_labels();
+    const base = get_surface_base();
+    if (base)
+        fire_state.dq = dq_from_LE(+e.target.value * 1e3, fire_state.dtheta, base.rho_sfc, base.thetav_sfc);
+    sync_flux_controls();
     draw_skewt();
 });
-// Reflect fire_state -> slider DOM (after a drag updated it in-place).
+
 function sync_flux_controls()
 {
-    document.getElementById("fire_H").value  = fire_state.H;
-    document.getElementById("fire_LE").value = fire_state.LE;
-    update_flux_labels();
+    const base = get_surface_base();
+    if (!base) return;
+    const H_kw  = H_from_dtheta(fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    const LE_kw = LE_from_dq(fire_state.dq, fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    document.getElementById("fire_H").value  = H_kw;
+    document.getElementById("fire_LE").value = LE_kw;
+    update_flux_labels(H_kw, LE_kw);
 }
 
-function update_flux_labels()
+function update_flux_labels(H_kw, LE_kw)
 {
     document.getElementById("fire_H_label").textContent =
-        `Sensible heat flux: ${fire_state.H.toFixed(1)} kW/m²`;
+        `Sensible heat flux: ${H_kw.toFixed(1)} kW/m²`;
     document.getElementById("fire_LE_label").textContent =
-        `Latent heat flux: ${fire_state.LE.toFixed(1)} kW/m²`;
+        `Latent heat flux: ${LE_kw.toFixed(1)} kW/m²`;
 }
 document.getElementById("show_isobars").addEventListener("change", draw_skewt);
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
@@ -298,6 +306,27 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
             .attr("fill", "rgba(31,119,180,0.9)")
             .text(mixing_ratios[i].toFixed(1));
     });
+}
+
+// Returns surface thermodynamic base state from model_sounding, or null if unavailable.
+function get_surface_base()
+{
+    if (!model_sounding) return null;
+
+    const p_sfc_pa = (model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa)) * 100;
+    const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
+    const idx_above = p_pa_all.findIndex(p => p < p_sfc_pa);
+    const fallback_idx = idx_above === -1 ? 0 : idx_above;
+
+    const T_env_sfc  = model_sounding.T_2m  ?? model_sounding.T[fallback_idx];
+    const Td_env_sfc = model_sounding.Td_2m ?? model_sounding.Td[fallback_idx];
+    const exner_sfc  = exner(p_sfc_pa);
+    const theta_sfc  = T_env_sfc / exner_sfc;
+    const qt_sfc     = qsat(Td_env_sfc, p_sfc_pa);
+    const thetav_sfc = virtual_temp(theta_sfc, qt_sfc);
+    const rho_sfc    = p_sfc_pa / (Rd * exner_sfc * thetav_sfc);
+
+    return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
 }
 
 function draw_skewt()
@@ -490,29 +519,9 @@ function draw_skewt()
 
         function get_surface_state()
         {
-            const p_sfc_pa = (model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa)) * 100;
-            const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
-            const idx_above = p_pa_all.findIndex(p => p < p_sfc_pa);
-            const fallback_idx = idx_above === -1 ? 0 : idx_above;
-
-            const T_env_sfc  = model_sounding.T_2m  ?? model_sounding.T[fallback_idx];
-            const Td_env_sfc = model_sounding.Td_2m ?? model_sounding.Td[fallback_idx];
-            const exner_sfc  = exner(p_sfc_pa);
-            const theta_sfc  = T_env_sfc / exner_sfc;
-            const qt_sfc     = qsat(Td_env_sfc, p_sfc_pa);
-            const thetav_sfc = virtual_temp(theta_sfc, qt_sfc);
-            const rho_sfc    = p_sfc_pa / (Rd * exner_sfc * thetav_sfc);
-
-            const { dtheta, dq, w0 } = compute_fire_surface(
-                fire_state.H * 1e3, fire_state.LE * 1e3,
-                rho_sfc, theta_sfc, thetav_sfc,
-            );
-
-            return {
-                p_sfc_pa, T_env_sfc, Td_env_sfc,
-                exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc,
-                dtheta, dq, w0,
-            };
+            const base = get_surface_base();
+            const w0 = w0_from_dtheta(fire_state.dtheta, base.thetav_sfc);
+            return { ...base, dtheta: fire_state.dtheta, dq: fire_state.dq, w0 };
         }
 
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
@@ -612,25 +621,15 @@ function draw_skewt()
                 {
                     const s = get_surface_state();
                     const val_new = inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker);
-                    let dtheta_new = s.dtheta;
-                    let dq_new     = s.dq;
                     if (axis === "T")
-                        dtheta_new = (val_new - s.T_env_sfc) / s.exner_sfc;
+                        fire_state.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
                     else
-                        dq_new = qsat(val_new, s.p_sfc_pa) - s.qt_sfc;
-
-                    const { H, LE } = invert_fire_surface(
-                        dtheta_new, dq_new, s.rho_sfc, s.theta_sfc, s.thetav_sfc,
-                    );
-                    const H_in  = document.getElementById("fire_H");
-                    const LE_in = document.getElementById("fire_LE");
-                    fire_state.H  = Math.min(+H_in.max,  Math.max(0, H  / 1e3));
-                    fire_state.LE = Math.min(+LE_in.max, Math.max(0, LE / 1e3));
+                        fire_state.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
                     sync_flux_controls();
                     reposition_markers();
                     redraw_parcel();
                 })
-                .on("end", function () { d3.select(this).style("cursor", "grab"); });
+                .on("end", function () { d3.select(this).style("cursor", "grab"); draw_skewt(); });
 
             T_node.call(make_drag("T"));
             Td_node.call(make_drag("Td"));

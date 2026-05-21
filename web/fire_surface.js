@@ -18,37 +18,35 @@ import { cp, Lv, g } from "./thermo.js";
 import { A_W, B_W, H0_PLUME } from "./parcel.js";
 
 
-// Forward: Given (H, LE) calculate (dtheta, dq, w0) at top of surface layer
-export function compute_fire_surface(H, LE, rho, theta, thetav)
+// w0² = K·dθ  (K = 3·g·A_W·H0 / (2·θv·(1+B_W))), derived from w0³ = C·H, H = ρ·cp·dθ·w0.
+export function w0_from_dtheta(dtheta, thetav)
 {
-    const Fv = H + 0.61 * cp * theta * LE / Lv;
-    if (Fv <= 0)
-        return { dtheta: 0, dq: 0, w0: 0 };
-
-    const w0 = Math.cbrt(3 * g * A_W * H0_PLUME * Fv
-                         / (2 * rho * cp * thetav * (1 + B_W)));
-
-    return {
-        dtheta: H  / (rho * cp * w0),
-        dq:     LE / (rho * Lv * w0),
-        w0,
-    };
+    if (dtheta <= 0) return 0;
+    return Math.sqrt(3 * g * A_W * H0_PLUME * dtheta / (2 * thetav * (1 + B_W)));
 }
 
-// Inverse: Given (dtheta, dq) calculate (H, LE, w0).
-export function invert_fire_surface(dtheta, dq, rho, theta, thetav)
+// Slider → state.
+export function dtheta_from_H(H, rho, thetav)
 {
-    const w0_sq = 3 * g * A_W * H0_PLUME
-                  / (2 * thetav * (1 + B_W))
-                  * (dtheta + 0.61 * theta * dq);
+    if (H <= 0) return 0;
+    const K = 3 * g * A_W * H0_PLUME / (2 * thetav * (1 + B_W));
+    return Math.pow(H / (rho * cp * Math.sqrt(K)), 2 / 3);
+}
 
-    if (w0_sq <= 0)
-        return { H: 0, LE: 0, w0: 0 };
+export function dq_from_LE(LE, dtheta, rho, thetav)
+{
+    const w0 = w0_from_dtheta(dtheta, thetav);
+    if (w0 <= 0) return 0;
+    return LE / (rho * Lv * w0);
+}
 
-    const w0 = Math.sqrt(w0_sq);
-    return {
-        H:  rho * cp * w0 * dtheta,
-        LE: rho * Lv * w0 * dq,
-        w0,
-    };
+// State → display.
+export function H_from_dtheta(dtheta, rho, thetav)
+{
+    return rho * cp * dtheta * w0_from_dtheta(dtheta, thetav);
+}
+
+export function LE_from_dq(dq, dtheta, rho, thetav)
+{
+    return rho * Lv * dq * w0_from_dtheta(dtheta, thetav);
 }
