@@ -17,6 +17,14 @@
 import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_temp } from "./thermo.js";
 
 
+export const A_W      = 1.0;
+export const B_W      = 0.2;
+export const FAC_ENT  = 1;  // Non-dimensional scaling of entrainment, from Eyken (2026)
+export const BETA     = 0.5; // The ratio fractional detrainment / fractional entrainment
+export const DZ_PLUME = 50;
+export const H0_PLUME = 20;
+
+
 function interp(x, xp, fp)
 {
     // Linear interpolation of fp at positions x, given sample points xp (ascending).
@@ -94,17 +102,28 @@ export function calc_non_entraining_parcel(T_sfc, Td_sfc, p_sfc, p)
 
 export function calc_entraining_parcel(
     z_env, T_env, Td_env, p_env,
-    dtheta_plume_s, dq_plume_s, area_plume_s,
+    dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s,
     {
         fire_multiplier = 1,
-        a_w    = 1.0,
-        b_w    = 0.2,
-        fac_ent = 0.8,
-        beta   = 0.4,
-        dz     = 50,
+        a_w    = A_W,
+        b_w    = B_W,
+        fac_ent = FAC_ENT,
+        beta   = BETA,
+        dz     = DZ_PLUME,
         z_max  = 5000,
     } = {})
 {
+    const w_eps = 1e-6;
+
+    if (w0_plume_s < w_eps)
+        return {
+            T: [], T_pseudo: [], Tv: [], Td: [],
+            theta: [], thetav: [], qt: [],
+            area: [], w: [], mass_flux: [],
+            entrainment: [], detrainment: [], type: [],
+            z: [], p: [],
+        };
+
     // Build uniform height grid.
     const n = Math.floor(z_max / dz);
     const z = Array.from({ length: n }, (_, i) => i * dz);
@@ -121,7 +140,7 @@ export function calc_entraining_parcel(
     const rho_e    = p_e.map((p, k) => p / (Rd * exner_e[k] * thetav_e[k]));
 
     // Allocate parcel arrays.
-    const theta_p  = new Array(n);
+    const thetal_p = new Array(n);
     const qt_p     = new Array(n);
     const thetav_p = new Array(n);
     const T_p      = new Array(n);
@@ -133,37 +152,45 @@ export function calc_entraining_parcel(
     const det_p    = new Array(n);
     const type_p   = new Array(n).fill(0);
 
-    // Initial conditions.
-    theta_p[0] = theta_e[0] + fire_multiplier * dtheta_plume_s;
-    qt_p[0]    = qt_e[0]    + fire_multiplier * dq_plume_s;
+    // Initial conditions. Fire perturbation is a dry heat excess (ql=0 at source),
+    // so thetal_p == theta_p at the surface.
+    thetal_p[0] = theta_e[0] + fire_multiplier * dtheta_plume_s;
+    qt_p[0]     = qt_e[0]    + fire_multiplier * dq_plume_s;
 
-    let { T, ql, qi } = sat_adjust(theta_p[0], qt_p[0], p_e[0]);
+    let { T, ql, qi } = sat_adjust(thetal_p[0], qt_p[0], p_e[0]);
     T_p[0]      = T;
     Tv_p[0]     = virtual_temp(T, qt_p[0], ql, qi);
     thetav_p[0] = Tv_p[0]/exner_e[0];
     area_p[0]   = area_plume_s;
-    w_p[0]      = 0.1;
+    w_p[0]      = w0_plume_s;
     mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
 
     // Entrainment settings (Morton formulation).
-    const epsi = fac_ent * beta / Math.sqrt(area_plume_s);
-    const delt = epsi / beta;
+    const epsi = fac_ent / Math.sqrt(area_plume_s);
+    const delt = epsi * beta;
 
     ent_p[0] = epsi * mf_p[0];
     det_p[0] = 0.0;
 
     // Integrate upward.
-    const w_eps = 1e-6;
     let i = 1;
     for (; i < n; i++)
     {
-        mf_p[i]    = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
-        theta_p[i] = theta_p[i-1] - ent_p[i-1] * (theta_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
-        qt_p[i]    = qt_p[i-1]    - ent_p[i-1] * (qt_p[i-1]    - qt_e[i-1])    / mf_p[i-1] * dz;
+        mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
+        // TODO: use thetal_e here instead of theta_e. Currently theta_e == thetal_e only
+        // because the environment is assumed unsaturated (ql_e = 0). If the environment
+        // is saturated, entrained air carries condensate and theta_e > thetal_e.
+        thetal_p[i] = thetal_p[i-1] - ent_p[i-1] * (thetal_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
+        qt_p[i]     = qt_p[i-1]     - ent_p[i-1] * (qt_p[i-1]     - qt_e[i-1])    / mf_p[i-1] * dz;
 
-        ({ T, ql, qi } = sat_adjust(theta_p[i], qt_p[i], p_e[i]));
+        ({ T, ql, qi } = sat_adjust(thetal_p[i], qt_p[i], p_e[i]));
+
+        // Pseudoadiabatic: remove condensate so it does not accumulate in the parcel.
+        qt_p[i]    -= ql;
+        thetal_p[i] = T / exner_e[i];
+
         T_p[i]      = T;
-        Tv_p[i]     = virtual_temp(T, qt_p[i], ql, qi);
+        Tv_p[i]     = virtual_temp(T, qt_p[i], 0, 0);
         thetav_p[i] = Tv_p[i] / exner_e[i];
 
         if (ql > 0 || qi > 0)
@@ -202,7 +229,7 @@ export function calc_entraining_parcel(
         T_pseudo:    T_pseudo,
         Tv:          sl(Tv_p),
         Td:          Td_out,
-        theta:       sl(theta_p),
+        thetal:      sl(thetal_p),
         thetav:      sl(thetav_p),
         qt:          qt_out,
         area:        sl(area_p),

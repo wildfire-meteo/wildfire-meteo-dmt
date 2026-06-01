@@ -15,7 +15,8 @@
 //
 
 import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
-import { exner, qsat } from "./thermo.js";
+import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
+import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
 
 const svg = d3.select("#skewt");
@@ -37,7 +38,8 @@ let model_sounding = null;
 let obs_sounding = null;
 let model_forecast = null;
 let current_time = 0;
-let parcel_starts = null;
+
+const fire_state = { dtheta: 0, dq: 0 };
 
 const color_T   = "#EB0056";
 const color_Td  = "#0056EB";
@@ -125,11 +127,6 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             Td_2m:               data.Td_2m[current_time],
         };
 
-        parcel_starts = data.T_2m.map((T_2m, ti) => ({
-            T:  T_2m,
-            Td: data.Td_2m[ti],
-        }));
-
         document.getElementById("launch_parcel").disabled = false;
         document.getElementById("show_model_sounding").checked = true;
         draw_skewt();
@@ -180,6 +177,41 @@ document.getElementById("fire_area").addEventListener("input", (e) =>
         `Fire area: ${area_km2} km²`;
     draw_skewt();
 });
+document.getElementById("fire_H").addEventListener("input", (e) =>
+{
+    const base = get_surface_base();
+    if (base)
+        fire_state.dtheta = dtheta_from_H(+e.target.value * 1e3, base.rho_sfc, base.thetav_sfc);
+    sync_flux_controls();
+    draw_skewt();
+});
+document.getElementById("fire_LE").addEventListener("input", (e) =>
+{
+    const base = get_surface_base();
+    if (base)
+        fire_state.dq = dq_from_LE(+e.target.value * 1e3, fire_state.dtheta, base.rho_sfc, base.thetav_sfc);
+    sync_flux_controls();
+    draw_skewt();
+});
+
+function sync_flux_controls()
+{
+    const base = get_surface_base();
+    if (!base) return;
+    const H_kw  = H_from_dtheta(fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    const LE_kw = LE_from_dq(fire_state.dq, fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    document.getElementById("fire_H").value  = H_kw;
+    document.getElementById("fire_LE").value = LE_kw;
+    update_flux_labels(H_kw, LE_kw);
+}
+
+function update_flux_labels(H_kw, LE_kw)
+{
+    document.getElementById("fire_H_label").textContent =
+        `Sensible heat flux: ${H_kw.toFixed(1)} kW/m²`;
+    document.getElementById("fire_LE_label").textContent =
+        `Latent heat flux: ${LE_kw.toFixed(1)} kW/m²`;
+}
 document.getElementById("show_isobars").addEventListener("change", draw_skewt);
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
 document.getElementById("show_isohumes").addEventListener("change", () =>
@@ -274,6 +306,27 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
             .attr("fill", "rgba(31,119,180,0.9)")
             .text(mixing_ratios[i].toFixed(1));
     });
+}
+
+// Returns surface thermodynamic base state from model_sounding, or null if unavailable.
+function get_surface_base()
+{
+    if (!model_sounding) return null;
+
+    const p_sfc_pa = (model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa)) * 100;
+    const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
+    const idx_above = p_pa_all.findIndex(p => p < p_sfc_pa);
+    const fallback_idx = idx_above === -1 ? 0 : idx_above;
+
+    const T_env_sfc  = model_sounding.T_2m  ?? model_sounding.T[fallback_idx];
+    const Td_env_sfc = model_sounding.Td_2m ?? model_sounding.Td[fallback_idx];
+    const exner_sfc  = exner(p_sfc_pa);
+    const theta_sfc  = T_env_sfc / exner_sfc;
+    const qt_sfc     = qsat(Td_env_sfc, p_sfc_pa);
+    const thetav_sfc = virtual_temp(theta_sfc, qt_sfc);
+    const rho_sfc    = p_sfc_pa / (Rd * exner_sfc * thetav_sfc);
+
+    return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
 }
 
 function draw_skewt()
@@ -395,21 +448,22 @@ function draw_skewt()
 
             const mode      = document.getElementById("parcel_mode").value;
             const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
-            const p_sfc_pa  = (model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa)) * 100;
-            const T_s       = parcel_starts[current_time].T;
-            const Td_s      = parcel_starts[current_time].Td;
+            const surf      = get_surface_state();
+
+            const T_s  = surf.T_env_sfc + surf.dtheta * surf.exner_sfc;
+            const Td_s = dewpoint(surf.qt_sfc + surf.dq, surf.p_sfc_pa);
 
             // Index of the first pressure level strictly above the surface.
             // p_pa_all is sorted descending (highest pressure first).
-            const idx_above = p_pa_all.findIndex(p => p < p_sfc_pa);
+            const idx_above = p_pa_all.findIndex(p => p < surf.p_sfc_pa);
 
             if (mode === "non_entraining")
             {
                 // Parcel grid: surface pressure + all levels above it.
                 const p_above = idx_above === -1 ? [] : p_pa_all.slice(idx_above);
-                const p_parcel = [p_sfc_pa, ...p_above].sort((a, b) => b - a);
+                const p_parcel = [surf.p_sfc_pa, ...p_above].sort((a, b) => b - a);
 
-                const parcel = calc_non_entraining_parcel(T_s, Td_s, p_sfc_pa, p_parcel);
+                const parcel = calc_non_entraining_parcel(T_s, Td_s, surf.p_sfc_pa, p_parcel);
 
                 draw_parcel_segments([
                     [parcel.p_dry,     parcel.T_dry],
@@ -433,36 +487,41 @@ function draw_skewt()
                     const i1 = idx_above;
                     const lp0 = Math.log(p_pa_all[i0]);
                     const lp1 = Math.log(p_pa_all[i1]);
-                    const t   = (Math.log(p_sfc_pa) - lp0) / (lp1 - lp0);
+                    const t   = (Math.log(surf.p_sfc_pa) - lp0) / (lp1 - lp0);
                     z_sfc_agl = model_sounding.z_agl[i0] + t * (model_sounding.z_agl[i1] - model_sounding.z_agl[i0]);
                 }
 
                 // Environment: surface point followed by all levels above the surface.
-                const p_env  = [p_sfc_pa, ...p_pa_all.slice(idx_above)];
-                const T_env  = [model_sounding.T_2m  ?? model_sounding.T[idx_above],  ...model_sounding.T.slice(idx_above)];
-                const Td_env = [model_sounding.Td_2m ?? model_sounding.Td[idx_above], ...model_sounding.Td.slice(idx_above)];
+                const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
+                const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
+                const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
                 const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
 
-                const T_env_sfc  = model_sounding.T_2m  ?? model_sounding.T[idx_above];
-                const Td_env_sfc = model_sounding.Td_2m ?? model_sounding.Td[idx_above];
-                const dtheta = T_s / exner(p_sfc_pa) - T_env_sfc / exner(p_sfc_pa);
-                const dq     = qsat(Td_s, p_sfc_pa) - qsat(Td_env_sfc, p_sfc_pa);
-                const area   = 10 ** +document.getElementById("fire_area").value;
+                const area = 10 ** +document.getElementById("fire_area").value;
 
                 const parcel = calc_entraining_parcel(
                     z_env, T_env, Td_env, p_env,
-                    dtheta, dq, area,
+                    surf.dtheta, surf.dq, surf.w0, area,
                     { z_max: 12000 },
                 );
+
+                if (parcel.p.length === 0) return;
 
                 // T for the full ascent; Td only below LCL (where type == 0).
                 const lcl_idx = parcel.type.indexOf(1);
                 const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
                 draw_parcel_segments([
-                    [parcel.p,                 parcel.T_pseudo],
+                    [parcel.p,                 parcel.T],
                     [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
                 ]);
             }
+        }
+
+        function get_surface_state()
+        {
+            const base = get_surface_base();
+            const w0 = w0_from_dtheta(fire_state.dtheta, base.thetav_sfc);
+            return { ...base, dtheta: fire_state.dtheta, dq: fire_state.dq, w0 };
         }
 
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
@@ -511,50 +570,69 @@ function draw_skewt()
                     .call(drag);
         }
 
-        const update_T_sfc  = v => { model_sounding.T_2m  = v; if (parcel_starts) parcel_starts[current_time].T  = v; };
-        const update_Td_sfc = v => { model_sounding.Td_2m = v; if (parcel_starts) parcel_starts[current_time].Td = v; };
+        const update_T_sfc  = v => { model_sounding.T_2m  = v; };
+        const update_Td_sfc = v => { model_sounding.Td_2m = v; };
 
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T,  update_T_sfc);
         draw_skewt_profile(td_pts, color_Td, model_sounding.Td, update_Td_sfc);
 
         if (!document.getElementById("edit_mode").checked &&
-             document.getElementById("launch_parcel").checked &&
-             parcel_starts)
+             document.getElementById("launch_parcel").checked)
         {
             const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
 
-            const draw_parcel_marker = (get_T, set_T, color) =>
-            {
-                const node = chart.append("circle")
-                    .attr("cx", x(skew_transform(get_T(), sfc_p_hpa_marker)))
-                    .attr("cy", y(sfc_p_hpa_marker))
-                    .attr("r", 5)
-                    .attr("fill", "white")
-                    .attr("stroke", color)
-                    .attr("stroke-width", 2)
-                    .style("cursor", "grab");
-
-                node.call(d3.drag()
-                    .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
-                    .on("drag",  function (event) {
-                        set_T(inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker));
-                        node.attr("cx", x(skew_transform(get_T(), sfc_p_hpa_marker)));
-                        redraw_parcel();
-                    })
-                    .on("end",   function () { d3.select(this).style("cursor", "grab"); })
-                );
+            const surf0  = get_surface_state();
+            const T_marker_val  = () => {
+                const s = get_surface_state();
+                return s.T_env_sfc + s.dtheta * s.exner_sfc;
+            };
+            const Td_marker_val = () => {
+                const s = get_surface_state();
+                return dewpoint(s.qt_sfc + s.dq, s.p_sfc_pa);
             };
 
-            draw_parcel_marker(
-                ()  => parcel_starts[current_time].T,
-                val => { parcel_starts[current_time].T = val; },
-                "#000"
-            );
-            draw_parcel_marker(
-                ()  => parcel_starts[current_time].Td,
-                val => { parcel_starts[current_time].Td = val; },
-                "#000"
-            );
+            const T_node = chart.append("circle")
+                .attr("cx", x(skew_transform(surf0.T_env_sfc + surf0.dtheta * surf0.exner_sfc, sfc_p_hpa_marker)))
+                .attr("cy", y(sfc_p_hpa_marker))
+                .attr("r", 5)
+                .attr("fill", "white")
+                .attr("stroke", "#000")
+                .attr("stroke-width", 2)
+                .style("cursor", "grab");
+
+            const Td_node = chart.append("circle")
+                .attr("cx", x(skew_transform(dewpoint(surf0.qt_sfc + surf0.dq, surf0.p_sfc_pa), sfc_p_hpa_marker)))
+                .attr("cy", y(sfc_p_hpa_marker))
+                .attr("r", 5)
+                .attr("fill", "white")
+                .attr("stroke", "#000")
+                .attr("stroke-width", 2)
+                .style("cursor", "grab");
+
+            const reposition_markers = () =>
+            {
+                T_node.attr("cx",  x(skew_transform(T_marker_val(),  sfc_p_hpa_marker)));
+                Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
+            };
+
+            const make_drag = (axis) => d3.drag()
+                .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
+                .on("drag", function (event)
+                {
+                    const s = get_surface_state();
+                    const val_new = inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker);
+                    if (axis === "T")
+                        fire_state.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
+                    else
+                        fire_state.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
+                    sync_flux_controls();
+                    reposition_markers();
+                    redraw_parcel();
+                })
+                .on("end", function () { d3.select(this).style("cursor", "grab"); draw_skewt(); });
+
+            T_node.call(make_drag("T"));
+            Td_node.call(make_drag("Td"));
         }
 
         redraw_parcel();
@@ -776,13 +854,6 @@ document.getElementById("match_profile_btn").addEventListener("click", () =>
             model_sounding.Td[i] = interp_log_p(p, Td_pairs);
         }
     });
-
-    if (parcel_starts && parcel_starts[current_time])
-    {
-        const sfc_idx = model_sounding.p_hpa.indexOf(Math.max(...model_sounding.p_hpa));
-        parcel_starts[current_time].T  = model_sounding.T[sfc_idx];
-        parcel_starts[current_time].Td = model_sounding.Td[sfc_idx];
-    }
 
     draw_skewt();
 });
