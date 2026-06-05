@@ -95,6 +95,23 @@ main {
     align-self: center;
 }
 
+.sidebar-disclaimer {
+    margin: 0;
+    margin-top: auto;
+    padding-top: 1rem;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    text-align: center;
+    color: var(--color-text);
+    border-top: 1px solid var(--color-border);
+}
+
+.sidebar-disclaimer .material-icons {
+    font-size: 1rem;
+    vertical-align: -0.15em;
+    margin-right: 0.15rem;
+}
+
 .sidebar {
     width: 280px;
     flex-shrink: 0;
