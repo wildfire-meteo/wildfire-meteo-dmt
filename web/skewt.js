@@ -172,9 +172,10 @@ document.getElementById("launch_parcel").addEventListener("change", draw_skewt);
 document.getElementById("parcel_mode").addEventListener("change", draw_skewt);
 document.getElementById("fire_area").addEventListener("input", (e) =>
 {
-    const area_km2 = (10 ** (+e.target.value - 6)).toFixed(1);
+    const area_km2 = 10 ** (+e.target.value - 6);
+    const decimals = area_km2 < 0.1 ? 3 : 1;
     document.getElementById("fire_area_label").textContent =
-        `Fire area: ${area_km2} km²`;
+        `Fire area: ${area_km2.toFixed(decimals)} km²`;
     draw_skewt();
 });
 document.getElementById("fire_H").addEventListener("input", (e) =>
