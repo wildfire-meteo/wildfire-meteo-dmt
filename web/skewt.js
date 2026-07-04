@@ -81,7 +81,9 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
     spinner.style.display = "";
 
     const url = `/api/model_sounding?lat=${lat}&lon=${lon}&model=${model}&date=${date}`;
-    fetch(url).then(r => r.json()).then(data =>
+    fetch(url)
+        .then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail); }); return r.json(); })
+        .then(data =>
     {
         spinner.style.display = "none";
         model_forecast = data;
@@ -130,7 +132,8 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("launch_parcel").disabled = false;
         document.getElementById("show_model_sounding").checked = true;
         draw_skewt();
-    });
+    })
+        .catch(err => { spinner.style.display = "none"; alert("Failed to fetch model sounding. " + err.message); });
 });
 
 document.getElementById("export_nc_btn").addEventListener("click", () =>
