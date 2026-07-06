@@ -50,14 +50,26 @@ const font_size = "14px";
 // grid. Larger = more smoothing. Set to 0 to disable smoothing entirely.
 const MATCH_PROFILE_SMOOTHING_HPA = 5;
 
+// x-axis mapping used everywhere a temperature needs a pixel position: the
+// profile lines, parcel path, draggable markers, obs sounding and background
+// families all go through this single pair of functions. In "theta" mode the
+// x-axis is potential temperature instead of temperature, which is why a dry
+// adiabat (constant theta by definition) collapses to a vertical line for
+// free — no per-family backend change needed, just a different x variable.
 function skew_transform(T_k, p_hpa)
 {
+    if (document.getElementById("diagram_mode").value === "theta")
+        return T_k / exner(p_hpa * 100) - 273.15;
+
     const skew_factor = +document.getElementById("skew_factor").value;
     return (T_k - 273.15) + skew_factor * (Math.log(1000) - Math.log(p_hpa));
 }
 
 function inv_skew_transform(T_skewed, p_hpa)
 {
+    if (document.getElementById("diagram_mode").value === "theta")
+        return (T_skewed + 273.15) * exner(p_hpa * 100);
+
     const skew_factor = +document.getElementById("skew_factor").value;
     return T_skewed - skew_factor * (Math.log(1000) - Math.log(p_hpa)) + 273.15;
 }
@@ -231,6 +243,14 @@ document.getElementById("edit_mode").addEventListener("change", draw_skewt);
 document.getElementById("skew_factor").addEventListener("input", (e) =>
 {
     document.getElementById("skew_factor_label").textContent = `Skew factor: ${e.target.value}`;
+    draw_skewt();
+});
+
+document.getElementById("diagram_mode").addEventListener("change", (e) =>
+{
+    // Skew factor only applies to the skew-T x-axis — in theta-conserved mode
+    // it has no meaning (theta is already vertical by construction).
+    document.getElementById("skew_factor_row").style.display = e.target.value === "theta" ? "none" : "";
     draw_skewt();
 });
 
@@ -736,7 +756,7 @@ function draw_skewt()
         .attr("x", W / 2).attr("y", H + 38)
         .attr("text-anchor", "middle")
         .style("font-size", font_size)
-        .text("Temperature (°C)");
+        .text(document.getElementById("diagram_mode").value === "theta" ? "θ (°C)" : "Temperature (°C)");
 
     if (model_forecast)
     {
