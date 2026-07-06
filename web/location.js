@@ -14,9 +14,37 @@
 // limitations under the License.
 //
 
+import { set_tz_name, on_display_change, set_reference, get_entry_mode_local, set_entry_mode_local, get_offset_label, read_utc_datetime, to_display_datetime } from "./time_utils.js";
+
 function reset_case_select()
 {
     document.getElementById("case_select").value = "";
+}
+
+// Recomputes the one shared offset from whatever is currently displayed, and
+// notifies every subscriber (this label, the model slider, the plot title).
+// Call this any time the date/time fields, the zone, or the entry mode change
+// — it's the single choke point that keeps all three in lockstep.
+function refresh_reference()
+{
+    set_reference(document.getElementById("date_input").value, document.getElementById("time_input").value);
+}
+
+function refresh_time_entry_label()
+{
+    document.getElementById("time_input_label").textContent = get_entry_mode_local() ? `Time (${get_offset_label()})` : "Time (UTC)";
+}
+
+on_display_change(refresh_time_entry_label);
+
+// Resolves the IANA timezone for a location. Fire-and-forget: only affects
+// the input-entry conversion and labels next time they're read or re-rendered.
+function fetch_timezone(lat, lon)
+{
+    return fetch(`/api/timezone?lat=${lat}&lon=${lon}`)
+        .then(r => r.json())
+        .then(({ tz }) => { set_tz_name(tz); refresh_reference(); })
+        .catch(() => {});
 }
 
 function fetch_nearest_stations()
@@ -24,6 +52,8 @@ function fetch_nearest_stations()
     const lat = document.getElementById("lat_input").value;
     const lon = document.getElementById("lon_input").value;
     if (!lat || !lon) return;
+
+    fetch_timezone(lat, lon);
 
     fetch(`/api/nearest_stations?lat=${lat}&lon=${lon}`)
         .then(r => r.json())
@@ -43,19 +73,43 @@ function fetch_nearest_stations()
         });
 }
 
+function write_now()
+{
+    const now = new Date();
+    const disp = to_display_datetime(now.toISOString().slice(0, 10), now.toISOString().slice(11, 16));
+    document.getElementById("date_input").value = disp.date;
+    document.getElementById("time_input").value = disp.time;
+    refresh_reference();
+}
+
 function set_location(lat, lon, reset_time = true)
 {
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
     if (reset_time)
     {
-        const now = new Date();
-        document.getElementById("date_input").value = now.toISOString().slice(0, 10);
-        document.getElementById("time_input").value = now.toISOString().slice(11, 16);
+        write_now();
+        // Timezone for this location may not be resolved yet (e.g. right after
+        // geolocating for the first time) — redraw "now" once it lands.
+        fetch_timezone(lat, lon).then(write_now);
     }
     reset_case_select();
     fetch_nearest_stations();
 }
+
+document.getElementById("local_time_checkbox").addEventListener("change", (e) =>
+{
+    const date_el = document.getElementById("date_input");
+    const time_el = document.getElementById("time_input");
+    const utc = read_utc_datetime(date_el.value, time_el.value);
+
+    set_entry_mode_local(e.target.checked);
+
+    const disp = to_display_datetime(utc.date, utc.time);
+    date_el.value = disp.date;
+    time_el.value = disp.time;
+    refresh_reference();
+});
 
 function here_and_now(fetch_after = false)
 {
@@ -190,8 +244,8 @@ document.addEventListener("keydown", (e) =>
 for (const id of ["lat_input", "lon_input"])
     document.getElementById(id).addEventListener("input", () => { reset_case_select(); fetch_nearest_stations(); });
 
-document.getElementById("date_input").addEventListener("input", reset_case_select);
-document.getElementById("time_input").addEventListener("input", reset_case_select);
+document.getElementById("date_input").addEventListener("input", () => { reset_case_select(); refresh_reference(); });
+document.getElementById("time_input").addEventListener("input", () => { reset_case_select(); refresh_reference(); });
 
 document.getElementById("case_select").addEventListener("change", (e) =>
 {
@@ -199,7 +253,10 @@ document.getElementById("case_select").addEventListener("change", (e) =>
     const [, date, lat, lon] = e.target.value.split("|");
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
-    document.getElementById("date_input").value = date;
+    // Cases only carry a UTC date (no time). Anchor on UTC noon so the
+    // displayed calendar date doesn't flip near a local-time day boundary.
+    document.getElementById("date_input").value = to_display_datetime(date, "12:00").date;
+    refresh_reference();
     fetch_nearest_stations();
 });
 

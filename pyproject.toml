@@ -13,6 +13,7 @@ dependencies = [
     "openmeteo-requests",
     "requests-cache",
     "retry-requests",
+    "timezonefinder",
     "uv",
 ]
 
