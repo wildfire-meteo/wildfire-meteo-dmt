@@ -22,6 +22,7 @@ import tempfile
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from timezonefinder import TimezoneFinder
 
 import pandas as pd
 from .skewT import get_static_lines
@@ -33,6 +34,7 @@ app = FastAPI()
 # Cache at startup — these never change at runtime.
 _lines    = get_static_lines(ktot=200)
 _stations = load_sounding_stations()
+_tf       = TimezoneFinder()
 
 
 @app.get("/api/background")
@@ -122,6 +124,12 @@ def nearest_stations(lat: float = Query(...), lon: float = Query(...)):
             "direction": direction,
         })
     return result
+
+
+@app.get("/api/timezone")
+def timezone(lat: float = Query(...), lon: float = Query(...)):
+    tz = _tf.timezone_at(lat=lat, lng=lon)
+    return {"tz": tz or "UTC"}
 
 
 @app.get("/api/radiosonde_sounding")

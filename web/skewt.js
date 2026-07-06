@@ -18,6 +18,7 @@ import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js"
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
+import { read_utc_datetime, format_full_label, format_slider_label, on_display_change } from "./time_utils.js";
 
 const svg = d3.select("#skewt");
 
@@ -68,12 +69,22 @@ fetch("/api/background").then(r => r.json()).then(bg =>
     draw_skewt();
 });
 
+// Refresh immediately on any zone resolution or "Local time" checkbox toggle
+// — the title and slider label must never wait for the next slider move.
+on_display_change(() =>
+{
+    if (!model_forecast) return;
+    document.getElementById("time_label").textContent = format_slider_label(model_forecast.date, model_forecast.times[current_time]);
+    draw_skewt();
+});
+
 document.getElementById("fetch_model_btn").addEventListener("click", () =>
 {
     const lat   = document.getElementById("lat_input").value;
     const lon   = document.getElementById("lon_input").value;
-    const date  = document.getElementById("date_input").value;
     const model = document.getElementById("model_select").value;
+    const utc   = read_utc_datetime(document.getElementById("date_input").value, document.getElementById("time_input").value);
+    const date  = utc.date;
 
     if (!lat || !lon || !date) return;
 
@@ -87,9 +98,10 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
     {
         spinner.style.display = "none";
         model_forecast = data;
+        model_forecast.date = date;
         document.getElementById("export_nc_btn").disabled = false;
 
-        const time_str = document.getElementById("time_input").value;
+        const time_str = utc.time;
         if (time_str)
         {
             const [h, m]   = time_str.split(":").map(Number);
@@ -110,7 +122,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         slider.max = data.times.length - 1;
         slider.value = current_time;
 
-        document.getElementById("time_label").textContent = data.times[current_time] + " UTC";
+        document.getElementById("time_label").textContent = format_slider_label(date, data.times[current_time]);
         document.getElementById("time_section").style.display = "";
 
         model_sounding = {
@@ -140,8 +152,8 @@ document.getElementById("export_nc_btn").addEventListener("click", () =>
 {
     const lat   = document.getElementById("lat_input").value;
     const lon   = document.getElementById("lon_input").value;
-    const date  = document.getElementById("date_input").value;
     const model = document.getElementById("model_select").value;
+    const date  = read_utc_datetime(document.getElementById("date_input").value, document.getElementById("time_input").value).date;
     window.location.href = `/api/model_sounding/export?lat=${lat}&lon=${lon}&model=${model}&date=${date}`;
 });
 
@@ -150,7 +162,7 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     if (!model_forecast) return;
 
     current_time = +e.target.value;
-    document.getElementById("time_label").textContent = model_forecast.times[current_time] + " UTC";
+    document.getElementById("time_label").textContent = format_slider_label(model_forecast.date, model_forecast.times[current_time]);
 
     model_sounding = {
         p_hpa:               model_forecast.p_hpa,
@@ -743,9 +755,8 @@ function draw_skewt()
     {
         const lat = document.getElementById("lat_input").value;
         const lon = document.getElementById("lon_input").value;
-        const date = document.getElementById("date_input").value;
         const model = document.getElementById("model_select").selectedOptions[0].text;
-        const time = model_forecast.times[current_time];
+        const label = format_full_label(model_forecast.date, model_forecast.times[current_time]);
         const selected_case = document.getElementById("case_select").value;
         const case_prefix = selected_case ? document.getElementById("case_select").selectedOptions[0].text + "  |  " : "";
 
@@ -754,7 +765,7 @@ function draw_skewt()
             .attr("text-anchor", "middle")
             .style("font-size", font_size)
             .style("fill", "#444")
-            .text(`${case_prefix}${lat}°N, ${lon}°E  |  ${date} ${time} UTC  |  model: ${model}`);
+            .text(`${case_prefix}${lat}°N, ${lon}°E  |  ${label}  |  model: ${model}`);
     }
 }
 
@@ -782,7 +793,7 @@ document.getElementById("sounding_upload").addEventListener("change", (e) =>
 document.getElementById("fetch_sounding_btn").addEventListener("click", () =>
 {
     const station = document.getElementById("station_select").value;
-    const date    = document.getElementById("date_input").value;
+    const date    = read_utc_datetime(document.getElementById("date_input").value, document.getElementById("time_input").value).date;
     const hour    = document.getElementById("sounding_time_select").value;
 
     if (!station || !date) return;
