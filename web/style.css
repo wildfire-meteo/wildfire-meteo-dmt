@@ -445,6 +445,23 @@ main {
     to { transform: rotate(360deg); }
 }
 
+.input-with-spinner {
+    position: relative;
+}
+
+.latlon-spinner {
+    position: absolute;
+    top: 50%;
+    right: 0.65rem;
+    width: 14px;
+    height: 14px;
+    margin-top: -7px;
+    border: 2px solid var(--color-border);
+    border-top-color: var(--color-accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
 .sidebar-logos {
     margin-top: auto;
     padding-top: 1rem;

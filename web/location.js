@@ -57,6 +57,11 @@ function set_location(lat, lon, reset_time = true)
     fetch_nearest_stations();
 }
 
+function set_latlon_spinner(show)
+{
+    document.querySelectorAll(".latlon-spinner").forEach(el => el.style.display = show ? "" : "none");
+}
+
 function here_and_now(fetch_after = false)
 {
     if (fetch_after)
@@ -64,9 +69,12 @@ function here_and_now(fetch_after = false)
 
     if (navigator.geolocation)
     {
+        set_latlon_spinner(true);
+
         navigator.geolocation.getCurrentPosition(
             (pos) =>
             {
+                set_latlon_spinner(false);
                 set_location(pos.coords.latitude.toFixed(4), pos.coords.longitude.toFixed(4));
                 if (fetch_after)
                     document.getElementById("fetch_model_btn").click();
@@ -74,6 +82,7 @@ function here_and_now(fetch_after = false)
             () =>
             {
                 document.getElementById("plot_spinner").style.display = "none";
+                set_latlon_spinner(false);
                 set_location(52, 6);
                 const btn  = document.getElementById("here_and_now_btn");
                 btn.disabled = true;
