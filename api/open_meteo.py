@@ -90,6 +90,7 @@ def get_meteo(lat, lon, model, pressure_lev_vars, pressure_levs, single_lev_vars
         "hourly": variables,
         "models": [model],
         "wind_speed_unit": "ms",
+        "elevation":"nan",
     }
 
     if forecast:
@@ -106,6 +107,8 @@ def get_meteo(lat, lon, model, pressure_lev_vars, pressure_levs, single_lev_vars
 
     # Gather data in 2D (time, level) and 1D (time) arrays.
     data = {}
+    data['elevation'] = response.Elevation()        # The grid cell average elevation
+
     for var in pressure_lev_vars:
         data[var] = np.zeros((n_times, n_press_levs), dtype=np.float32)
 
@@ -191,7 +194,7 @@ def get_model_sounding(lat, lon, model, date_str):
     v = -meteo['wind_speed'] * np.cos(wd_rad)
 
     z = meteo['geopotential_height']
-    z_agl = z - z[:, 0:1]
+    z_agl = z - meteo['elevation']
 
     p_coord = ('time', 'p')
     coords  = {'time': meteo['time'], 'p': p}
