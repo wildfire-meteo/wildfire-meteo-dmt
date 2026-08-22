@@ -44,7 +44,7 @@ def get_static_lines(ktot=64):
 
     # Start points (temperature in Celsius at 1000 hPa) of static lines.
     x0_isotherms      = np.arange(-120, 40.01, 10)
-    x0_dry_adiabats   = np.arange( -40, 50.01, 10)
+    x0_dry_adiabats   = np.arange( -40, 80.01, 10)
     x0_moist_adiabats = np.arange(-15, 55.01, 5)
     r_isohumes        = np.array([0.5, 1, 2, 4, 8, 15, 30])  # g/kg
 

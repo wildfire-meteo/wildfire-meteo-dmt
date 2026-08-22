@@ -53,6 +53,12 @@ const MATCH_PROFILE_SMOOTHING_HPA = 5;
 // Fixed slant used by the "Temperature (skew)" x-axis (the classic skew-T).
 const SKEW_FACTOR = 35;
 
+const x_limits = {
+    temp:  [-60, 40],
+    skew:  [-40, 50],
+    theta: [-10, 80],
+};
+
 // x-axis mapping used everywhere a temperature needs a pixel position: the
 // profile lines, parcel path, draggable markers, obs sounding and background
 // families all go through this single pair of functions. In "theta" mode the
@@ -264,7 +270,8 @@ function draw_isobars(chart, y, W)
             .attr("x1", 0).attr("y1", y(p))
             .attr("x2", W).attr("y2", y(p))
             .attr("stroke", "rgba(179,179,179,0.5)")
-            .attr("stroke-width", 1);
+            .attr("stroke-width", 1)
+            .attr("stroke-dasharray", "4,3");
     });
 }
 
@@ -287,7 +294,7 @@ function draw_height_labels(chart, y, p_hpa, z, sfc_p_hpa)
     });
 }
 
-function draw_skewt_lines(chart, x, y, temps, pressures_pa, color)
+function draw_skewt_lines(chart, x, y, temps, pressures_pa, color, dashed = false)
 {
     const p_hpa = pressures_pa.map(p => p / 100);
 
@@ -302,6 +309,7 @@ function draw_skewt_lines(chart, x, y, temps, pressures_pa, color)
             .attr("fill", "none")
             .attr("stroke", color)
             .attr("stroke-width", 1)
+            .attr("stroke-dasharray", dashed ? "4,3" : null)
             .attr("d", line_gen);
     });
 }
@@ -367,7 +375,8 @@ function draw_skewt()
 
     if (W <= 0 || H <= 0) return;
 
-    const x = current_zoom.rescaleX(d3.scaleLinear().domain([-40, 50]).range([0, W]));
+    const x_mode = document.getElementById("x_axis_mode").value;
+    const x = current_zoom.rescaleX(d3.scaleLinear().domain(x_limits[x_mode]).range([0, W]));
     const y = current_zoom.rescaleY(d3.scaleLog().domain([1013, +document.getElementById("p_top").value]).range([H, 0]));
 
     const g = svg.append("g")
@@ -394,7 +403,7 @@ function draw_skewt()
     if (bg_data)
     {
         if (document.getElementById("show_isotherms").checked)
-            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, "rgba(148,103,189,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, "rgba(148,103,189,0.5)", true);
         if (document.getElementById("show_isohumes").checked)
         {
             draw_skewt_lines(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, "rgba(31,119,180,0.5)");
