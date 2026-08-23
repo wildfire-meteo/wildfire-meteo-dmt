@@ -217,4 +217,5 @@ def get_model_sounding(lat, lon, model, date_str):
         'surface_pressure': (('time',), meteo['surface_pressure'] * 100),  # hPa → Pa
         'T_2m':             (('time',), meteo['temperature_2m']),
         'Td_2m':            (('time',), meteo['dew_point_2m']),
+        'elevation':        meteo['elevation'],
     }, coords=coords)
