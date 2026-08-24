@@ -81,6 +81,7 @@ def model_sounding(
         "surface_pressure": (ds["surface_pressure"].values / 100).tolist(),  # Pa → hPa
         "T_2m":             ds["T_2m"].values.tolist(),
         "Td_2m":            ds["Td_2m"].values.tolist(),
+        "elevation":        float(ds["elevation"].item()),
     }
 
 
