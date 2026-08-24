@@ -175,5 +175,20 @@ def serve_css(filename: str):
     return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
+# no-store like the .js/.css above: a cached index.html against fresh scripts
+# leaves the DOM missing elements the scripts expect.
+@app.get("/")
+def serve_index():
+    return FileResponse(_web / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/{filename}.html")
+def serve_html(filename: str):
+    path = _web / f"{filename}.html"
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 # Serve the frontend. Must be last so API routes take priority.
 app.mount("/", StaticFiles(directory=_web, html=True))

@@ -41,9 +41,10 @@ let current_time = 0;
 
 const fire_state = { dtheta: 0, dq: 0 };
 
-const color_T   = "#EB0056";
-const color_Td  = "#0056EB";
-const font_size = "14px";
+const color_T     = "#EB0056";
+const color_Td    = "#0056EB";
+const color_w_sat = "#00A6FF";
+const font_size   = "14px";
 
 // Vertical velocity panel. Dropped when the main plot would fall below MIN_MAIN_W.
 const W_PANEL_W     = 100;
@@ -359,6 +360,14 @@ function draw_w_panel(panel, y, H, parcel)
     const w_max = Math.max(...parcel.w);
     const w_top = W_AXIS_LADDER.find(v => v >= w_max) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
     const xw    = d3.scaleLinear().domain([0, w_top]).range([0, W_PANEL_W]);
+    const ticks = [0, w_top / 2, w_top];
+
+    ticks.forEach(w =>
+        dyn.append("line")
+            .attr("x1", xw(w)).attr("y1", 0)
+            .attr("x2", xw(w)).attr("y2", H)
+            .attr("stroke", "rgba(179,179,179,0.5)")
+            .attr("stroke-width", 1));
 
     const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
     const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
@@ -368,7 +377,7 @@ function draw_w_panel(panel, y, H, parcel)
     const k_cond = parcel.type.indexOf(1);
     const segments = k_cond === -1
         ? [[pts, "#000"]]
-        : [[pts.slice(0, k_cond + 1), "#000"], [pts.slice(k_cond), color_Td]];
+        : [[pts.slice(0, k_cond + 1), "#000"], [pts.slice(k_cond), color_w_sat]];
 
     segments.forEach(([seg, color]) =>
         clip.append("path").datum(seg)
@@ -406,10 +415,32 @@ function draw_w_panel(panel, y, H, parcel)
         .attr("font-size", "11px").attr("fill", "#666")
         .text(`${(z_top / 1000).toFixed(1)} km`);
 
+    // Top of the buoyant layer; the plume coasts from here to its top.
+    const k_nb = parcel.buoy.findLastIndex(b => b >= 0);
+    if (k_nb > 0 && k_nb < parcel.buoy.length - 1)
+    {
+        const y_nb    = y(parcel.p[k_nb] / 100);
+        const nb_flip = xw(parcel.w[k_nb]) > W_PANEL_W / 2;
+
+        clip.append("line")
+            .attr("x1", 0).attr("y1", y_nb)
+            .attr("x2", W_PANEL_W).attr("y2", y_nb)
+            .attr("stroke", "#888")
+            .attr("stroke-width", 1)
+            .attr("stroke-dasharray", "2,3");
+        // Shallow plumes stack all three annotations, so only label when it sits clear.
+        if (y_max - y_nb > 14 && y_nb - y(p_top_plume) > 14)
+            clip.append("text")
+                .attr("x", nb_flip ? 4 : W_PANEL_W - 4).attr("y", y_nb - 5)
+                .attr("text-anchor", nb_flip ? "start" : "end")
+                .attr("font-size", "11px").attr("fill", "#666")
+                .text("B = 0");
+    }
+
     dyn.append("g")
         .attr("transform", `translate(0,${H})`)
-        .call(d3.axisBottom(xw).tickValues([0, w_top / 2, w_top]))
-        .selectAll("text").style("font-size", "11px");
+        .call(d3.axisBottom(xw).tickValues(ticks))
+        .selectAll("text").style("font-size", font_size);
 }
 
 // Returns surface thermodynamic base state from model_sounding, or null if unavailable.
