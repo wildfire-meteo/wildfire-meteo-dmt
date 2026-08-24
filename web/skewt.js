@@ -356,7 +356,7 @@ function draw_skewt()
     if (W <= 0 || H <= 0) return;
 
     const x = current_zoom.rescaleX(d3.scaleLinear().domain([-40, 50]).range([0, W]));
-    const y = current_zoom.rescaleY(d3.scaleLog().domain([1013, +document.getElementById("p_top").value]).range([H, 0]));
+    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, +document.getElementById("p_top").value]).range([H, 0]));
 
     const g = svg.append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
