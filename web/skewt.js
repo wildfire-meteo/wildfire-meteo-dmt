@@ -152,6 +152,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             surface_pressure_hpa: data.surface_pressure[current_time],
             T_2m:                data.T_2m[current_time],
             Td_2m:               data.Td_2m[current_time],
+            elevation:           data.elevation,
         };
 
         document.getElementById("launch_parcel").disabled = false;
@@ -191,6 +192,7 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
         surface_pressure_hpa: model_forecast.surface_pressure[current_time],
         T_2m:                model_forecast.T_2m[current_time],
         Td_2m:               model_forecast.Td_2m[current_time],
+        elevation:           model_forecast.elevation,
     };
 
     draw_skewt();
@@ -200,9 +202,10 @@ document.getElementById("launch_parcel").addEventListener("change", draw_skewt);
 document.getElementById("parcel_mode").addEventListener("change", draw_skewt);
 document.getElementById("fire_area").addEventListener("input", (e) =>
 {
-    const area_km2 = (10 ** (+e.target.value - 6)).toFixed(1);
+    const area_km2 = 10 ** (+e.target.value - 6);
+    const decimals = area_km2 < 0.1 ? 3 : 1;
     document.getElementById("fire_area_label").textContent =
-        `Fire area: ${area_km2} km²`;
+        `Fire area: ${area_km2.toFixed(decimals)} km²`;
     draw_skewt();
 });
 document.getElementById("fire_H").addEventListener("input", (e) =>
@@ -377,7 +380,7 @@ function draw_skewt()
 
     const x_mode = document.getElementById("x_axis_mode").value;
     const x = current_zoom.rescaleX(d3.scaleLinear().domain(x_limits[x_mode]).range([0, W]));
-    const y = current_zoom.rescaleY(d3.scaleLog().domain([1013, +document.getElementById("p_top").value]).range([H, 0]));
+    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, +document.getElementById("p_top").value]).range([H, 0]));
 
     const g = svg.append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
@@ -502,21 +505,8 @@ function draw_skewt()
             {
                 if (idx_above === -1) return;
 
-                // Interpolate z_agl at the surface pressure for height referencing.
-                let z_sfc_agl;
-                if (idx_above === 0)
-                {
-                    z_sfc_agl = 0;
-                }
-                else
-                {
-                    const i0 = idx_above - 1;
-                    const i1 = idx_above;
-                    const lp0 = Math.log(p_pa_all[i0]);
-                    const lp1 = Math.log(p_pa_all[i1]);
-                    const t   = (Math.log(surf.p_sfc_pa) - lp0) / (lp1 - lp0);
-                    z_sfc_agl = model_sounding.z_agl[i0] + t * (model_sounding.z_agl[i1] - model_sounding.z_agl[i0]);
-                }
+                // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+                const z_sfc_agl = 0;
 
                 // Environment: surface point followed by all levels above the surface.
                 const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
