@@ -221,7 +221,7 @@
                         </label>
                         <label>
                             <input type="checkbox" id="show_isotherms" checked>
-                            Isotherms <span style="color:#b3b3b3"><b>&mdash;&mdash;&mdash;</b></span>
+                            Isotherms <span style="color:#9467bd"><b>&mdash;&mdash;&mdash;</b></span>
                         </label>
                         <label>
                             <input type="checkbox" id="show_isohumes" checked>
@@ -240,8 +240,12 @@
                             Moist adiabats <span style="color:#0D9146"><b>&mdash;&mdash;&mdash;</b></span>
                         </label>
                         <label>
-                            <span id="skew_factor_label">Skew factor: 35</span>
-                            <input type="range" id="skew_factor" min="0" max="50" value="35" step="1">
+                            x-axis
+                            <select id="x_axis_mode">
+                                <option value="temp">Temperature</option>
+                                <option value="skew" selected>Temperature (skew)</option>
+                                <option value="theta">Potential temperature</option>
+                            </select>
                         </label>
                         <label>
                             <span id="p_top_label">Top: 100 hPa</span>
