@@ -154,6 +154,14 @@
                             No parcels — click "Add" to launch one.
                         </span>
 
+                        <label>
+                            <input type="checkbox" id="show_w_panel" disabled>
+                            Vertical velocity panel
+                        </label>
+                        <span id="w_panel_note" class="sidebar-note" style="display:none">
+                            Window too narrow for the vertical velocity panel.
+                        </span>
+
                         <div id="parcel_editor" class="section-body" style="display:none; padding: 0;">
                             <label>
                                 Name
@@ -166,13 +174,6 @@
                                     <option value="entraining">Entraining</option>
                                 </select>
                             </label>
-                            <label>
-                                <input type="checkbox" id="show_w_panel">
-                                Vertical velocity panel
-                            </label>
-                            <span id="w_panel_note" class="sidebar-note" style="display:none">
-                                Window too narrow for the vertical velocity panel.
-                            </span>
                             <label>
                                 <span id="fire_area_label">Fire area: 1.0 km²</span>
                                 <input type="range" id="fire_area" min="3" max="7" step="0.1" value="6">

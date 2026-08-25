@@ -36,6 +36,5 @@ export function make_parcel(existing)
         fire_area:    6,
         dtheta:       0,
         dq:           0,
-        show_w_panel: false,
     };
 }

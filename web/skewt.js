@@ -230,6 +230,7 @@ function render_parcel_list()
 
     document.getElementById("add_parcel_btn").disabled = !model_sounding || parcels.length >= MAX_PARCELS;
     document.getElementById("remove_parcel_btn").disabled = parcels.length === 0;
+    sync_w_panel_control();
 }
 
 function select_parcel(id)
@@ -282,15 +283,12 @@ function load_parcel_into_editor()
     const decimals = area_km2 < 0.1 ? 3 : 1;
     document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
 
-    sync_w_panel_control();
     sync_flux_controls();
 }
 
 function sync_w_panel_control()
 {
-    const p = active_parcel();
-    document.getElementById("show_w_panel").disabled = !p;
-    document.getElementById("show_w_panel").checked = p ? p.show_w_panel : false;
+    document.getElementById("show_w_panel").disabled = parcels.length === 0;
 }
 
 document.getElementById("parcel_name_input").addEventListener("input", (e) =>
@@ -306,13 +304,9 @@ document.getElementById("parcel_mode").addEventListener("change", (e) =>
     if (p) p.mode = e.target.value;
     draw_skewt();
 });
-document.getElementById("show_w_panel").addEventListener("change", (e) =>
-{
-    const p = active_parcel();
-    if (p) p.show_w_panel = e.target.checked;
-    // Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
-    zoom.transform(svg, d3.zoomIdentity);
-});
+// Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
+document.getElementById("show_w_panel").addEventListener("change", () =>
+    zoom.transform(svg, d3.zoomIdentity));
 document.getElementById("fire_area").addEventListener("input", (e) =>
 {
     const p = active_parcel();
