@@ -399,6 +399,12 @@ document.getElementById("show_isohumes").addEventListener("change", () =>
 document.getElementById("label_isohumes").addEventListener("change", draw_skewt);
 document.getElementById("show_dry_adiabats").addEventListener("change", draw_skewt);
 document.getElementById("show_moist_adiabats").addEventListener("change", draw_skewt);
+document.getElementById("bg_line_opacity").addEventListener("input", (e) =>
+{
+    document.getElementById("bg_line_opacity_label").textContent =
+        `Line opacity: ${Math.round(+e.target.value * 100)}%`;
+    draw_skewt();
+});
 document.getElementById("show_model_sounding").addEventListener("change", draw_skewt);
 document.getElementById("edit_mode").addEventListener("change", draw_skewt);
 
@@ -410,6 +416,11 @@ document.getElementById("p_top").addEventListener("input", (e) =>
     draw_skewt();
 });
 
+function bg_rgba(rgb)
+{
+    return `rgba(${rgb},${document.getElementById("bg_line_opacity").value})`;
+}
+
 function draw_isobars(chart, y, W)
 {
     const p_levels = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100];
@@ -418,7 +429,7 @@ function draw_isobars(chart, y, W)
         chart.append("line")
             .attr("x1", 0).attr("y1", y(p))
             .attr("x2", W).attr("y2", y(p))
-            .attr("stroke", "rgba(179,179,179,0.5)")
+            .attr("stroke", bg_rgba("179,179,179"))
             .attr("stroke-width", 1)
             .attr("stroke-dasharray", "4,3");
     });
@@ -478,7 +489,7 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
             .attr("y", y_pos - 4)
             .attr("text-anchor", "middle")
             .attr("font-size", "12px")
-            .attr("fill", "rgba(31,119,180,0.9)")
+            .attr("fill", bg_rgba("31,119,180"))
             .text(mixing_ratios[i].toFixed(1));
     });
 }
@@ -664,17 +675,17 @@ function draw_skewt()
     if (bg_data)
     {
         if (document.getElementById("show_isotherms").checked)
-            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, "rgba(148,103,189,0.5)", true);
+            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, bg_rgba("148,103,189"), true);
         if (document.getElementById("show_isohumes").checked)
         {
-            draw_skewt_lines(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, "rgba(31,119,180,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, bg_rgba("31,119,180"));
             if (document.getElementById("label_isohumes").checked)
                 draw_isohume_labels(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, bg_data.isohume_mixing_ratios);
         }
         if (document.getElementById("show_dry_adiabats").checked)
-            draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       "rgba(214,39,40,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       bg_rgba("214,39,40"));
         if (document.getElementById("show_moist_adiabats").checked)
-            draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     "rgba(13,145,70,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     bg_rgba("13,145,70"));
     }
 
     // No vertical axis: y is shared, and margin.right keeps the barbs clear.
