@@ -229,6 +229,7 @@ function render_parcel_list()
     select.value = active_parcel_id ?? "";
 
     document.getElementById("add_parcel_btn").disabled = !model_sounding || parcels.length >= MAX_PARCELS;
+    document.getElementById("clone_parcel_btn").disabled = active_parcel_id === null || parcels.length >= MAX_PARCELS;
     document.getElementById("remove_parcel_btn").disabled = parcels.length === 0;
     sync_w_panel_control();
 }
@@ -258,6 +259,20 @@ document.getElementById("add_parcel_btn").addEventListener("click", () =>
 {
     if (parcels.length >= MAX_PARCELS) return;
     const p = make_parcel(parcels);
+    parcels.push(p);
+    select_parcel(p.id);
+});
+
+document.getElementById("clone_parcel_btn").addEventListener("click", () =>
+{
+    const src = active_parcel();
+    if (!src || parcels.length >= MAX_PARCELS) return;
+    const p = make_parcel(parcels);
+    p.name = src.name;
+    p.mode = src.mode;
+    p.fire_area = src.fire_area;
+    p.dtheta = src.dtheta;
+    p.dq = src.dq;
     parcels.push(p);
     select_parcel(p.id);
 });
