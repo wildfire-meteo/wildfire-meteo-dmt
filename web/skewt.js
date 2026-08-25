@@ -15,6 +15,7 @@
 //
 
 import { calc_parcel_ascent } from "./parcel.js";
+import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
@@ -39,7 +40,13 @@ let obs_sounding = null;
 let model_forecast = null;
 let current_time = 0;
 
-const fire_state = { dtheta: 0, dq: 0 };
+let parcels = [];
+let active_parcel_id = null;
+
+function active_parcel()
+{
+    return parcels.find(p => p.id === active_parcel_id) ?? null;
+}
 
 const color_T     = "#EB0056";
 const color_Td    = "#0056EB";
@@ -164,7 +171,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             elevation:           data.elevation,
         };
 
-        document.getElementById("launch_parcel").disabled = false;
+        render_parcel_list();
         document.getElementById("show_model_sounding").checked = true;
         draw_skewt();
     })
@@ -207,56 +214,141 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     draw_skewt();
 });
 
-function sync_w_panel_control()
+function render_parcel_list()
 {
-    document.getElementById("show_w_panel").disabled =
-        !document.getElementById("launch_parcel").checked;
+    const select = document.getElementById("parcel_select");
+    select.innerHTML = "";
+
+    parcels.forEach(p =>
+    {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = p.name;
+        select.appendChild(opt);
+    });
+    select.value = active_parcel_id ?? "";
+
+    document.getElementById("add_parcel_btn").disabled = !model_sounding || parcels.length >= MAX_PARCELS;
+    document.getElementById("remove_parcel_btn").disabled = parcels.length === 0;
 }
 
-document.getElementById("launch_parcel").addEventListener("change", () =>
+function select_parcel(id)
 {
+    active_parcel_id = id;
+    load_parcel_into_editor();
+    render_parcel_list();
+    draw_skewt();
+}
+
+function remove_parcel(id)
+{
+    parcels = parcels.filter(p => p.id !== id);
+    if (active_parcel_id === id)
+        active_parcel_id = parcels.length ? parcels[0].id : null;
+    load_parcel_into_editor();
+    render_parcel_list();
+    draw_skewt();
+}
+
+document.getElementById("parcel_select").addEventListener("change", (e) =>
+    select_parcel(+e.target.value));
+
+document.getElementById("add_parcel_btn").addEventListener("click", () =>
+{
+    if (parcels.length >= MAX_PARCELS) return;
+    const p = make_parcel(parcels);
+    parcels.push(p);
+    select_parcel(p.id);
+});
+
+document.getElementById("remove_parcel_btn").addEventListener("click", () =>
+{
+    if (active_parcel_id !== null) remove_parcel(active_parcel_id);
+});
+
+function load_parcel_into_editor()
+{
+    const p = active_parcel();
+
+    document.getElementById("parcel_editor").style.display = p ? "" : "none";
+    document.getElementById("no_parcel_note").style.display = p ? "none" : "";
+    if (!p) return;
+
+    document.getElementById("parcel_name_input").value = p.name;
+    document.getElementById("parcel_mode").value = p.mode;
+    document.getElementById("fire_area").value = p.fire_area;
+
+    const area_km2 = 10 ** (p.fire_area - 6);
+    const decimals = area_km2 < 0.1 ? 3 : 1;
+    document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
+
     sync_w_panel_control();
+    sync_flux_controls();
+}
+
+function sync_w_panel_control()
+{
+    const p = active_parcel();
+    document.getElementById("show_w_panel").disabled = !p;
+    document.getElementById("show_w_panel").checked = p ? p.show_w_panel : false;
+}
+
+document.getElementById("parcel_name_input").addEventListener("input", (e) =>
+{
+    const p = active_parcel();
+    if (!p) return;
+    p.name = e.target.value || p.name;
+    render_parcel_list();
+});
+document.getElementById("parcel_mode").addEventListener("change", (e) =>
+{
+    const p = active_parcel();
+    if (p) p.mode = e.target.value;
     draw_skewt();
 });
-document.getElementById("parcel_mode").addEventListener("change", () =>
+document.getElementById("show_w_panel").addEventListener("change", (e) =>
 {
-    sync_w_panel_control();
-    draw_skewt();
+    const p = active_parcel();
+    if (p) p.show_w_panel = e.target.checked;
+    // Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
+    zoom.transform(svg, d3.zoomIdentity);
 });
-// Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
-document.getElementById("show_w_panel").addEventListener("change", () =>
-    zoom.transform(svg, d3.zoomIdentity));
 document.getElementById("fire_area").addEventListener("input", (e) =>
 {
-    const area_km2 = 10 ** (+e.target.value - 6);
+    const p = active_parcel();
+    if (!p) return;
+    p.fire_area = +e.target.value;
+    const area_km2 = 10 ** (p.fire_area - 6);
     const decimals = area_km2 < 0.1 ? 3 : 1;
-    document.getElementById("fire_area_label").textContent =
-        `Fire area: ${area_km2.toFixed(decimals)} km²`;
+    document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
     draw_skewt();
 });
 document.getElementById("fire_H").addEventListener("input", (e) =>
 {
+    const p = active_parcel();
     const base = get_surface_base();
-    if (base)
-        fire_state.dtheta = dtheta_from_H(+e.target.value * 1e3, base.rho_sfc, base.thetav_sfc);
+    if (p && base)
+        p.dtheta = dtheta_from_H(+e.target.value * 1e3, base.rho_sfc, base.thetav_sfc);
     sync_flux_controls();
     draw_skewt();
 });
 document.getElementById("fire_LE").addEventListener("input", (e) =>
 {
+    const p = active_parcel();
     const base = get_surface_base();
-    if (base)
-        fire_state.dq = dq_from_LE(+e.target.value * 1e3, fire_state.dtheta, base.rho_sfc, base.thetav_sfc);
+    if (p && base)
+        p.dq = dq_from_LE(+e.target.value * 1e3, p.dtheta, base.rho_sfc, base.thetav_sfc);
     sync_flux_controls();
     draw_skewt();
 });
 
 function sync_flux_controls()
 {
+    const p = active_parcel();
     const base = get_surface_base();
-    if (!base) return;
-    const H_kw  = H_from_dtheta(fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
-    const LE_kw = LE_from_dq(fire_state.dq, fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    if (!p || !base) return;
+    const H_kw  = H_from_dtheta(p.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    const LE_kw = LE_from_dq(p.dq, p.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
     document.getElementById("fire_H").value  = H_kw;
     document.getElementById("fire_LE").value = LE_kw;
     update_flux_labels(H_kw, LE_kw);
@@ -614,93 +706,95 @@ function draw_skewt()
             .attr("fill", "#666")
             .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
 
-        function redraw_parcel()
+        function redraw_all_parcels()
         {
             chart.selectAll(".parcel-path").remove();
             if (w_panel) w_panel.selectAll(".w-panel-dyn").remove();
-
-            if (!document.getElementById("launch_parcel").checked) return;
 
             const parcel_line = d3.line()
                 .x(d => x(skew_transform(d[0], d[1])))
                 .y(d => y(d[1]));
 
-            const draw_parcel_segments = (segments) =>
+            const draw_parcel_segments = (segments, color) =>
                 segments.forEach(([p_arr, T_arr]) =>
                 {
                     chart.append("path")
                         .attr("class", "parcel-path")
                         .datum(p_arr.map((p, i) => [T_arr[i], p / 100]))
                         .attr("fill", "none")
-                        .attr("stroke", "#000")
+                        .attr("stroke", color)
                         .attr("stroke-width", 2)
                         .attr("stroke-dasharray", "6,3")
                         .attr("d", parcel_line);
                 });
 
-            const mode      = document.getElementById("parcel_mode").value;
-            const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
-            const surf      = get_surface_state();
+            const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
 
-            // Index of the first pressure level strictly above the surface.
-            // p_pa_all is sorted descending (highest pressure first).
-            const idx_above = p_pa_all.findIndex(p => p < surf.p_sfc_pa);
-            if (idx_above === -1) return;
+            parcels.forEach(p =>
+            {
+                const surf = get_surface_state(p);
 
-            // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
-            const z_sfc_agl = 0;
+                // Index of the first pressure level strictly above the surface.
+                // p_pa_all is sorted descending (highest pressure first).
+                const idx_above = p_pa_all.findIndex(pp => pp < surf.p_sfc_pa);
+                if (idx_above === -1) return;
 
-            // Environment: surface point followed by all levels above the surface.
-            const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
-            const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
-            const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
-            const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+                // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+                const z_sfc_agl = 0;
 
-            const area = 10 ** +document.getElementById("fire_area").value;
+                // Environment: surface point followed by all levels above the surface.
+                const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
+                const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
+                const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
+                const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
 
-            // "Non-entraining" is the entraining plume with entrainment switched off: the
-            // parcel then just conserves its initial thetal/qt with height (classic parcel
-            // theory) while still accelerating under buoyancy alone. It needs a nominal
-            // non-zero w0 to seed the integration (buoyancy takes over from there), since
-            // w0 == 0 (no fire perturbation) would otherwise stall the ascent immediately.
-            const w0_eps = 1e-3;
-            const fac_ent = mode === "non_entraining" ? 0 : undefined;
-            const w0      = mode === "non_entraining" ? Math.max(surf.w0, w0_eps) : surf.w0;
+                const area = 10 ** p.fire_area;
 
-            const parcel = calc_parcel_ascent(
-                z_env, T_env, Td_env, p_env,
-                surf.dtheta, surf.dq, w0, area,
-                { fac_ent, z_max: z_env[z_env.length - 1] },
-            );
+                // "Non-entraining" is the entraining plume with entrainment switched off: the
+                // parcel then just conserves its initial thetal/qt with height (classic parcel
+                // theory) while still accelerating under buoyancy alone. It needs a nominal
+                // non-zero w0 to seed the integration (buoyancy takes over from there), since
+                // w0 == 0 (no fire perturbation) would otherwise stall the ascent immediately.
+                const w0_eps = 1e-3;
+                const fac_ent = p.mode === "non_entraining" ? 0 : undefined;
+                const w0      = p.mode === "non_entraining" ? Math.max(surf.w0, w0_eps) : surf.w0;
 
-            if (w_panel) draw_w_panel(w_panel, y, H, parcel);
+                const result = calc_parcel_ascent(
+                    z_env, T_env, Td_env, p_env,
+                    surf.dtheta, surf.dq, w0, area,
+                    { fac_ent, z_max: z_env[z_env.length - 1] },
+                );
 
-            if (parcel.p.length === 0) return;
+                const show_w = w_panel && p.id === active_parcel_id;
+                if (show_w) draw_w_panel(w_panel, y, H, result);
 
-            // Plume top, tying the panel back to the sounding.
-            if (w_panel)
-                chart.append("line")
-                    .attr("class", "parcel-path")
-                    .attr("x1", 0).attr("y1", y(parcel.p[parcel.p.length - 1] / 100))
-                    .attr("x2", W).attr("y2", y(parcel.p[parcel.p.length - 1] / 100))
-                    .attr("stroke", "#888")
-                    .attr("stroke-width", 1)
-                    .attr("stroke-dasharray", "2,3");
+                if (result.p.length === 0) return;
 
-            // T for the full ascent; Td only below LCL (where type == 0).
-            const lcl_idx = parcel.type.indexOf(1);
-            const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
-            draw_parcel_segments([
-                [parcel.p,                 parcel.T],
-                [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
-            ]);
+                // Plume top, tying the panel back to the sounding.
+                if (show_w)
+                    chart.append("line")
+                        .attr("class", "parcel-path")
+                        .attr("x1", 0).attr("y1", y(result.p[result.p.length - 1] / 100))
+                        .attr("x2", W).attr("y2", y(result.p[result.p.length - 1] / 100))
+                        .attr("stroke", "#888")
+                        .attr("stroke-width", 1)
+                        .attr("stroke-dasharray", "2,3");
+
+                // T for the full ascent; Td only below LCL (where type == 0).
+                const lcl_idx = result.type.indexOf(1);
+                const n_sub   = lcl_idx === -1 ? result.p.length : lcl_idx + 1;
+                draw_parcel_segments([
+                    [result.p,                 result.T],
+                    [result.p.slice(0, n_sub), result.Td.slice(0, n_sub)],
+                ], p.color);
+            });
         }
 
-        function get_surface_state()
+        function get_surface_state(parcel)
         {
             const base = get_surface_base();
-            const w0 = w0_from_dtheta(fire_state.dtheta, base.thetav_sfc);
-            return { ...base, dtheta: fire_state.dtheta, dq: fire_state.dq, w0 };
+            const w0 = w0_from_dtheta(parcel.dtheta, base.thetav_sfc);
+            return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0 };
         }
 
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
@@ -728,7 +822,7 @@ function draw_skewt()
                     else if (on_surface_drag)
                         on_surface_drag(inv_skew_transform(d[0], d[1]));
 
-                    redraw_parcel();
+                    redraw_all_parcels();
                 })
                 .on("end", function ()
                 {
@@ -755,18 +849,19 @@ function draw_skewt()
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T,  update_T_sfc);
         draw_skewt_profile(td_pts, color_Td, model_sounding.Td, update_Td_sfc);
 
-        if (!document.getElementById("edit_mode").checked &&
-             document.getElementById("launch_parcel").checked)
+        const edit_parcel = active_parcel();
+
+        if (!document.getElementById("edit_mode").checked && edit_parcel)
         {
             const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
 
-            const surf0  = get_surface_state();
+            const surf0  = get_surface_state(edit_parcel);
             const T_marker_val  = () => {
-                const s = get_surface_state();
+                const s = get_surface_state(edit_parcel);
                 return s.T_env_sfc + s.dtheta * s.exner_sfc;
             };
             const Td_marker_val = () => {
-                const s = get_surface_state();
+                const s = get_surface_state(edit_parcel);
                 return dewpoint(s.qt_sfc + s.dq, s.p_sfc_pa);
             };
 
@@ -775,7 +870,7 @@ function draw_skewt()
                 .attr("cy", y(sfc_p_hpa_marker))
                 .attr("r", 5)
                 .attr("fill", "white")
-                .attr("stroke", "#000")
+                .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
                 .style("cursor", "grab");
 
@@ -784,7 +879,7 @@ function draw_skewt()
                 .attr("cy", y(sfc_p_hpa_marker))
                 .attr("r", 5)
                 .attr("fill", "white")
-                .attr("stroke", "#000")
+                .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
                 .style("cursor", "grab");
 
@@ -798,15 +893,15 @@ function draw_skewt()
                 .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
                 .on("drag", function (event)
                 {
-                    const s = get_surface_state();
+                    const s = get_surface_state(edit_parcel);
                     const val_new = inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker);
                     if (axis === "T")
-                        fire_state.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
+                        edit_parcel.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
                     else
-                        fire_state.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
+                        edit_parcel.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
                     sync_flux_controls();
                     reposition_markers();
-                    redraw_parcel();
+                    redraw_all_parcels();
                 })
                 .on("end", function () { d3.select(this).style("cursor", "grab"); draw_skewt(); });
 
@@ -814,7 +909,7 @@ function draw_skewt()
             Td_node.call(make_drag("Td"));
         }
 
-        redraw_parcel();
+        redraw_all_parcels();
     }
 
     if (obs_sounding)
@@ -847,8 +942,9 @@ function draw_skewt()
             legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: "6,3" });
             legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
         }
-        if (model_sounding && show_model && document.getElementById("launch_parcel").checked)
-            legend_items.push({ label: "Parcel", color: "#000", dashes: "6,3" });
+        if (model_sounding && show_model)
+            parcels.forEach(p =>
+                legend_items.push({ label: p.name, color: p.color, dashes: "6,3" }));
 
         const line_len = 22;
         const row_h    = 22;
