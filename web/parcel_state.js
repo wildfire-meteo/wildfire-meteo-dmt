@@ -14,8 +14,7 @@
 // limitations under the License.
 //
 
-// Paul Tol's colour-blind-safe "bright" qualitative scheme (SRON).
-export const PALETTE = ["#4477AA", "#66CCEE", "#228833", "#CCBB44", "#EE6677", "#AA3377", "#BBBBBB"];
+export const PALETTE = ["#000000", "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"];
 export const MAX_PARCELS = PALETTE.length;
 
 let next_id = 1;
