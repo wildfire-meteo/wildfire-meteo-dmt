@@ -14,22 +14,41 @@
 // limitations under the License.
 //
 
-export const PALETTE = ["#000000", "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00"];
+// Hues deliberately kept clear of every other line on the diagram: red (dry adiabats),
+// green (moist adiabats), blue (isohumes, Td) and purple (isotherms). Ordered so the
+// first few parcels are the most distinct.
+export const PALETTE = ["#000000", "#e8710a", "#00857f", "#b5179e", "#7f7a00", "#7a4a2a"];
 export const MAX_PARCELS = PALETTE.length;
 
 let next_id = 1;
 
-// Color is derived from the currently live parcels rather than the id counter,
-// so a color is freed for reuse when its parcel is removed.
+// Appends a counter only where one is needed, so a cloned name stays readable.
+export function unique_name(name, existing)
+{
+    const used = new Set(existing.map(p => p.name));
+    if (!used.has(name)) return name;
+
+    let n = 2;
+    while (used.has(`${name} ${n}`)) n++;
+    return `${name} ${n}`;
+}
+
+// Name and color both take the lowest free slot among the live parcels, so removing a
+// parcel frees both for reuse and no two parcels can end up sharing either. The id keeps
+// counting up regardless: it is the stable key the editor and the plot select on.
 export function make_parcel(existing)
 {
-    const used  = new Set(existing.map(p => p.color));
-    const color = PALETTE.find(c => !used.has(c)) ?? PALETTE[existing.length % PALETTE.length];
-    const id    = next_id++;
+    const used_colors = new Set(existing.map(p => p.color));
+    const used_names  = new Set(existing.map(p => p.name));
+
+    const color = PALETTE.find(c => !used_colors.has(c)) ?? PALETTE[existing.length % PALETTE.length];
+
+    let n = 1;
+    while (used_names.has(`Parcel ${n}`)) n++;
 
     return {
-        id,
-        name:         `Parcel ${id}`,
+        id:           next_id++,
+        name:         `Parcel ${n}`,
         color,
         mode:         "non_entraining",
         fire_area:    6,

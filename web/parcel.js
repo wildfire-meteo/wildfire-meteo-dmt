@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_temp } from "./thermo.js";
+import { Rd, g, exner, qsat, dewpoint, sat_adjust, virtual_temp } from "./thermo.js";
 
 
 export const A_W      = 1.0;
@@ -80,17 +80,19 @@ export function calc_parcel_ascent(
         beta   = BETA,
         dz     = DZ_PLUME,
         z_max  = 5000,
+        full_ascent = false,
     } = {})
 {
     const w_eps = 1e-6;
 
     if (w0_plume_s < w_eps)
         return {
-            T: [], T_pseudo: [], Tv: [], Td: [],
+            T: [], Tv: [], Td: [],
             theta: [], thetav: [], qt: [],
-            area: [], w: [], mass_flux: [],
+            area: [], w: [], buoy: [], mass_flux: [],
             entrainment: [], detrainment: [], type: [],
             z: [], p: [],
+            k_top: -1, k_lcl: -1, stopped: false,
         };
 
     // Build uniform height grid.
@@ -143,8 +145,11 @@ export function calc_parcel_ascent(
     ent_p[0] = epsi * mf_p[0];
     det_p[0] = 0.0;
 
-    // Integrate upward.
+    // Integrate upward. With full_ascent the thermodynamic path is carried on above the
+    // level where the plume stops (k_top), giving the classic parcel construction.
     let i = 1;
+    let k_top = -1;
+    let stopped = false;
     for (; i < n; i++)
     {
         mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
@@ -167,18 +172,25 @@ export function calc_parcel_ascent(
         if (ql > 0 || qi > 0)
             type_p[i] = 1;
 
-        buoy_p[i]  = g / thetav_e[i] * (thetav_p[i] - thetav_e[i]);
-        const w2   = w_p[i-1]**2 + 2 * (a_w * buoy_p[i] - b_w * epsi * w_p[i-1]**2) * dz;
-        w_p[i]     = Math.sqrt(Math.max(0, w2));
+        buoy_p[i] = g / thetav_e[i] * (thetav_p[i] - thetav_e[i]);
+
+        // Once stopped the parcel stays stopped; only its thermodynamic path continues.
+        const w2  = w_p[i-1]**2 + 2 * (a_w * buoy_p[i] - b_w * epsi * w_p[i-1]**2) * dz;
+        w_p[i]    = k_top === -1 ? Math.sqrt(Math.max(0, w2)) : 0;
 
         ent_p[i] = epsi * mf_p[i];
         det_p[i] = delt * mf_p[i];
 
-        area_p[i] = mf_p[i] / (rho_e[i] * (w_p[i] + w_eps));
+        area_p[i] = w_p[i] > w_eps ? mf_p[i] / (rho_e[i] * w_p[i]) : NaN;
 
-        if (area_p[i] <= 0 || w_p[i] < w_eps)
-            break;
+        if (w_p[i] < w_eps || mf_p[i] <= 0)
+        {
+            if (k_top === -1) { k_top = i - 1; stopped = true; }
+            if (!full_ascent) break;
+        }
     }
+
+    if (k_top === -1) k_top = i - 1;
 
     // Slice results to active portion and compute derived quantities.
     const sl     = arr => arr.slice(0, i);
@@ -189,15 +201,11 @@ export function calc_parcel_ascent(
     // Cap Td at T: above LCL the parcel is saturated so Td == T.
     const Td_out = qt_out.map((q, k) => Math.min(dewpoint(q, p_out[k]), T_out[k]));
 
-    // Post-process: pseudoadiabatic T above LCL so the line follows background theta_e lines.
-    const lcl_k     = Array.from(type_p.slice(0, i)).indexOf(1);
-    const T_pseudo  = lcl_k === -1
-        ? T_out.slice()
-        : [...T_out.slice(0, lcl_k), ...calc_moist_adiabat(T_out[lcl_k], p_out.slice(lcl_k))];
+    const type_out = Array.from(type_p.slice(0, i));
+    const k_lcl    = type_out.indexOf(1);
 
     return {
         T:           T_out,
-        T_pseudo:    T_pseudo,
         Tv:          sl(Tv_p),
         Td:          Td_out,
         thetal:      sl(thetal_p),
@@ -209,8 +217,9 @@ export function calc_parcel_ascent(
         mass_flux:   sl(mf_p),
         entrainment: sl(ent_p),
         detrainment: sl(det_p),
-        type:        Array.from(type_p.slice(0, i)),
+        type:        type_out,
         z:           z_out,
         p:           p_out,
+        k_top, k_lcl, stopped,
     };
 }

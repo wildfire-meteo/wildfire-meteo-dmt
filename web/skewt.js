@@ -15,7 +15,7 @@
 //
 
 import { calc_parcel_ascent } from "./parcel.js";
-import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
+import { make_parcel, unique_name, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
@@ -43,6 +43,9 @@ let current_time = 0;
 let parcels = [];
 let active_parcel_id = null;
 
+// Which parcel markers the last draw put on the plot, so the legend explains only those.
+let markers_drawn = { cloud_base: false, plume_top: false };
+
 function active_parcel()
 {
     return parcels.find(p => p.id === active_parcel_id) ?? null;
@@ -50,8 +53,15 @@ function active_parcel()
 
 const color_T     = "#EB0056";
 const color_Td    = "#0056EB";
-const color_w_sat = "#00A6FF";
 const font_size   = "14px";
+
+// Line weights and opacities. Parcels sit above the construction lines, but only the
+// one under edit is fully opaque, so it reads first without hiding the others.
+const LW_PROFILE     = 2.5;
+const LW_PARCEL      = 2.4;
+const LW_PARCEL_IDLE = 1.7;
+const OP_PARCEL      = 1.0;
+const OP_PARCEL_IDLE = 0.8;
 
 // Vertical velocity panel. Dropped when the main plot would fall below MIN_MAIN_W.
 const W_PANEL_W     = 100;
@@ -59,7 +69,7 @@ const W_PANEL_RIGHT = 30;
 const MIN_MAIN_W    = 320;
 
 // Coarse ladder for the w axis, so the domain stays stable while sliders are dragged.
-const W_AXIS_LADDER = [10, 20, 30, 50, 100];
+const W_AXIS_LADDER = [10, 20, 30, 50, 100, 150, 200];
 
 // Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
 // the observed T/Td profile before interpolating onto the model's pressure
@@ -294,7 +304,7 @@ document.getElementById("clone_parcel_btn").addEventListener("click", () =>
     const src = active_parcel();
     if (!src || parcels.length >= MAX_PARCELS) return;
     const p = make_parcel(parcels);
-    p.name = src.name;
+    p.name = unique_name(`${src.name} copy`, parcels);
     p.mode = src.mode;
     p.fire_area = src.fire_area;
     p.dtheta = src.dtheta;
@@ -495,12 +505,15 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
 }
 
 // Dynamic content of the w panel, redrawn on every drag tick. Shares y with the
-// main plot; the frame is drawn once per draw_skewt.
-function draw_w_panel(panel, y, H, parcel)
+// main plot; the frame is drawn once per draw_skewt. Entries come in draw order,
+// so the active parcel is last and ends up on top.
+function draw_w_panel(panel, y, H, entries)
 {
     const dyn = panel.append("g").attr("class", "w-panel-dyn");
 
-    if (parcel.w.length === 0)
+    const w_max_all = Math.max(0, ...entries.map(e => Math.max(0, ...e.result.w)));
+
+    if (w_max_all === 0)
     {
         ["Raise the sensible", "heat flux to", "launch a plume"].forEach((msg, i) =>
             dyn.append("text")
@@ -511,8 +524,7 @@ function draw_w_panel(panel, y, H, parcel)
         return;
     }
 
-    const w_max = Math.max(...parcel.w);
-    const w_top = W_AXIS_LADDER.find(v => v >= w_max) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
+    const w_top = W_AXIS_LADDER.find(v => v >= w_max_all) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
     const xw    = d3.scaleLinear().domain([0, w_top]).range([0, W_PANEL_W]);
     const ticks = [0, w_top / 2, w_top];
 
@@ -525,77 +537,59 @@ function draw_w_panel(panel, y, H, parcel)
 
     const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
     const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
-    const pts  = parcel.w.map((w, i) => [w, parcel.p[i] / 100]);
 
-    // Split at condensation, so the saturated part of the plume reads as moist.
-    const k_cond = parcel.type.indexOf(1);
-    const segments = k_cond === -1
-        ? [[pts, "#000"]]
-        : [[pts.slice(0, k_cond + 1), "#000"], [pts.slice(k_cond), color_w_sat]];
-
-    segments.forEach(([seg, color]) =>
-        clip.append("path").datum(seg)
-            .attr("fill", "none")
-            .attr("stroke", color)
-            .attr("stroke-width", 2)
-            .attr("d", line));
-
-    const k_max = parcel.w.indexOf(w_max);
-    const x_max = xw(w_max);
-    const y_max = y(parcel.p[k_max] / 100);
-    const flip  = x_max > W_PANEL_W / 2;
-
-    clip.append("circle")
-        .attr("cx", x_max).attr("cy", y_max).attr("r", 3).attr("fill", "#000");
-    clip.append("text")
-        .attr("x", flip ? x_max - 6 : x_max + 6)
-        .attr("y", y_max - 6)
-        .attr("text-anchor", flip ? "end" : "start")
-        .attr("font-size", "11px").attr("fill", "#000")
-        .text(`${w_max.toFixed(1)} m/s`);
-
-    const p_top_plume = parcel.p[parcel.p.length - 1] / 100;
-    const z_top       = parcel.z[parcel.z.length - 1];
-
-    clip.append("line")
-        .attr("x1", 0).attr("y1", y(p_top_plume))
-        .attr("x2", W_PANEL_W).attr("y2", y(p_top_plume))
-        .attr("stroke", "#888")
-        .attr("stroke-width", 1)
-        .attr("stroke-dasharray", "2,3");
-    clip.append("text")
-        .attr("x", W_PANEL_W - 4).attr("y", y(p_top_plume) - 5)
-        .attr("text-anchor", "end")
-        .attr("font-size", "11px").attr("fill", "#666")
-        .text(`${(z_top / 1000).toFixed(1)} km`);
-
-    // Top of the buoyant layer; the plume coasts from here to its top.
-    const k_nb = parcel.buoy.findLastIndex(b => b >= 0);
-    if (k_nb > 0 && k_nb < parcel.buoy.length - 1)
+    entries.forEach(({ parcel, result, is_active }) =>
     {
-        const y_nb    = y(parcel.p[k_nb] / 100);
-        const nb_flip = xw(parcel.w[k_nb]) > W_PANEL_W / 2;
+        const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
+        const op = is_active ? OP_PARCEL : OP_PARCEL_IDLE;
 
-        clip.append("line")
-            .attr("x1", 0).attr("y1", y_nb)
-            .attr("x2", W_PANEL_W).attr("y2", y_nb)
-            .attr("stroke", "#888")
-            .attr("stroke-width", 1)
-            .attr("stroke-dasharray", "2,3");
-        // Shallow plumes stack all three annotations, so only label when it sits clear.
-        if (y_max - y_nb > 14 && y_nb - y(p_top_plume) > 14)
-            clip.append("text")
-                .attr("x", nb_flip ? 4 : W_PANEL_W - 4).attr("y", y_nb - 5)
-                .attr("text-anchor", nb_flip ? "start" : "end")
-                .attr("font-size", "11px").attr("fill", "#666")
-                .text("B = 0");
-    }
+        clip.append("path")
+            .datum(result.w.slice(0, result.k_top + 1).map((w, i) => [w, result.p[i] / 100]))
+            .attr("fill", "none")
+            .attr("stroke", parcel.color)
+            .attr("stroke-width", lw)
+            .attr("stroke-opacity", op)
+            .attr("d", line);
+
+        // Cloud base, drawn with the same open marker as on the sounding so the two panels tie together.
+        if (result.k_lcl > 0 && result.k_lcl <= result.k_top)
+            clip.append("circle")
+                .attr("cx", xw(result.w[result.k_lcl])).attr("cy", y(result.p[result.k_lcl] / 100))
+                .attr("r", is_active ? 4 : 3)
+                .attr("fill", "white").attr("stroke", parcel.color)
+                .attr("stroke-width", 1.6).attr("opacity", op);
+
+        if (result.stopped)
+            clip.append("circle")
+                .attr("cx", xw(result.w[result.k_top])).attr("cy", y(result.p[result.k_top] / 100))
+                .attr("r", is_active ? 4 : 3)
+                .attr("fill", parcel.color).attr("opacity", op);
+
+        // w_max for the parcel in focus. Labelled but not marked: a dot here would read
+        // as a plume top.
+        if (!is_active) return;
+
+        const w_max = Math.max(...result.w);
+        const x_max = xw(w_max);
+        const flip  = x_max > W_PANEL_W / 2;
+
+        clip.append("text")
+            .attr("x", flip ? x_max - 6 : x_max + 6)
+            .attr("y", y(result.p[result.w.indexOf(w_max)] / 100) + 4)
+            .attr("text-anchor", flip ? "end" : "start")
+            .attr("font-size", "11px").attr("fill", parcel.color)
+            // Halo, so the label stays readable where it crosses another parcel.
+            .attr("stroke", "white").attr("stroke-width", 3)
+            .style("paint-order", "stroke fill")
+            .text(`${w_max.toFixed(1)} m/s`);
+    });
 
     dyn.append("g")
         .attr("transform", `translate(0,${H})`)
         .call(d3.axisBottom(xw).tickValues(ticks))
         .selectAll("text").style("font-size", font_size);
 }
+
 
 // Returns surface thermodynamic base state from model_sounding, or null if unavailable.
 function get_surface_base()
@@ -745,6 +739,45 @@ function draw_skewt()
             .attr("fill", "#666")
             .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
 
+        const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
+
+        function run_parcel(parcel)
+        {
+            const surf = get_surface_state(parcel);
+
+            // Index of the first pressure level strictly above the surface.
+            // p_pa_all is sorted descending (highest pressure first).
+            const idx_above = p_pa_all.findIndex(pp => pp < surf.p_sfc_pa);
+            if (idx_above === -1) return null;
+
+            // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+            const z_sfc_agl = 0;
+
+            // Environment: surface point followed by all levels above the surface.
+            const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
+            const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
+            const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
+            const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+
+            // "Non-entraining" is the entraining plume with entrainment switched off: the
+            // parcel then just conserves its initial thetal/qt with height (classic parcel
+            // theory) while still accelerating under buoyancy alone. It needs a nominal
+            // non-zero w0 to seed the integration (buoyancy takes over from there), since
+            // w0 == 0 (no fire perturbation) would otherwise stall the ascent immediately.
+            // Its path is also carried on above the level where it stops, as the diagram is
+            // then the classic construction for reading LFC, EL, CAPE and CIN.
+            const w0_eps      = 1e-3;
+            const classic     = parcel.mode === "non_entraining";
+            const fac_ent     = classic ? 0 : undefined;
+            const w0          = classic ? Math.max(surf.w0, w0_eps) : surf.w0;
+
+            return calc_parcel_ascent(
+                z_env, T_env, Td_env, p_env,
+                surf.dtheta, surf.dq, w0, 10 ** parcel.fire_area,
+                { fac_ent, z_max: z_env[z_env.length - 1], full_ascent: classic },
+            );
+        }
+
         function redraw_all_parcels()
         {
             chart.selectAll(".parcel-path").remove();
@@ -754,79 +787,55 @@ function draw_skewt()
                 .x(d => x(skew_transform(d[0], d[1])))
                 .y(d => y(d[1]));
 
-            const draw_parcel_segments = (segments, color) =>
-                segments.forEach(([p_arr, T_arr]) =>
-                {
-                    chart.append("path")
-                        .attr("class", "parcel-path")
-                        .datum(p_arr.map((p, i) => [T_arr[i], p / 100]))
-                        .attr("fill", "none")
-                        .attr("stroke", color)
-                        .attr("stroke-width", 2)
-                        .attr("stroke-dasharray", "6,3")
-                        .attr("d", parcel_line);
-                });
+            const parcel_path = (p_arr, T_arr, color, width, opacity) =>
+                chart.append("path")
+                    .attr("class", "parcel-path")
+                    .datum(p_arr.map((p, i) => [T_arr[i], p / 100]))
+                    .attr("fill", "none")
+                    .attr("stroke", color)
+                    .attr("stroke-width", width)
+                    .attr("stroke-opacity", opacity)
+                    .attr("d", parcel_line);
 
-            const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
+            markers_drawn = { cloud_base: false, plume_top: false };
 
-            parcels.filter(p => p.visible).forEach(p =>
+            // Active parcel last, so its line and markers end up on top of the others.
+            const drawn = parcels
+                .filter(p => p.visible)
+                .sort((a, b) => (a.id === active_parcel_id) - (b.id === active_parcel_id))
+                .map(p => ({ parcel: p, result: run_parcel(p), is_active: p.id === active_parcel_id }))
+                .filter(e => e.result && e.result.p.length);
+
+            drawn.forEach(({ parcel, result, is_active }) =>
             {
-                const surf = get_surface_state(p);
+                const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
+                const op = is_active ? OP_PARCEL : OP_PARCEL_IDLE;
+                const r  = is_active ? 4 : 3;
 
-                // Index of the first pressure level strictly above the surface.
-                // p_pa_all is sorted descending (highest pressure first).
-                const idx_above = p_pa_all.findIndex(pp => pp < surf.p_sfc_pa);
-                if (idx_above === -1) return;
-
-                // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
-                const z_sfc_agl = 0;
-
-                // Environment: surface point followed by all levels above the surface.
-                const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
-                const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
-                const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
-                const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
-
-                const area = 10 ** p.fire_area;
-
-                // "Non-entraining" is the entraining plume with entrainment switched off: the
-                // parcel then just conserves its initial thetal/qt with height (classic parcel
-                // theory) while still accelerating under buoyancy alone. It needs a nominal
-                // non-zero w0 to seed the integration (buoyancy takes over from there), since
-                // w0 == 0 (no fire perturbation) would otherwise stall the ascent immediately.
-                const w0_eps = 1e-3;
-                const fac_ent = p.mode === "non_entraining" ? 0 : undefined;
-                const w0      = p.mode === "non_entraining" ? Math.max(surf.w0, w0_eps) : surf.w0;
-
-                const result = calc_parcel_ascent(
-                    z_env, T_env, Td_env, p_env,
-                    surf.dtheta, surf.dq, w0, area,
-                    { fac_ent, z_max: z_env[z_env.length - 1] },
-                );
-
-                const show_w = w_panel && p.id === active_parcel_id;
-                if (show_w) draw_w_panel(w_panel, y, H, result);
-
-                if (result.p.length === 0) return;
-
-                // Plume top, tying the panel back to the sounding.
-                if (show_w)
-                    chart.append("line")
+                // Cloud base (open) and the level where the plume stops (filled).
+                const parcel_marker = (k, filled) =>
+                    chart.append("circle")
                         .attr("class", "parcel-path")
-                        .attr("x1", 0).attr("y1", y(result.p[result.p.length - 1] / 100))
-                        .attr("x2", W).attr("y2", y(result.p[result.p.length - 1] / 100))
-                        .attr("stroke", "#888")
-                        .attr("stroke-width", 1)
-                        .attr("stroke-dasharray", "2,3");
+                        .attr("cx", x(skew_transform(result.T[k], result.p[k] / 100)))
+                        .attr("cy", y(result.p[k] / 100))
+                        .attr("r", r)
+                        .attr("fill", filled ? parcel.color : "white")
+                        .attr("stroke", parcel.color)
+                        .attr("stroke-width", 1.6)
+                        .attr("opacity", op);
 
-                // T for the full ascent; Td only below LCL (where type == 0).
-                const lcl_idx = result.type.indexOf(1);
-                const n_sub   = lcl_idx === -1 ? result.p.length : lcl_idx + 1;
-                draw_parcel_segments([
-                    [result.p,                 result.T],
-                    [result.p.slice(0, n_sub), result.Td.slice(0, n_sub)],
-                ], p.color);
+                // A non-entraining path continues above where the plume stops; the marker,
+                // not a break in the line, is what says the plume got no further.
+                parcel_path(result.p, result.T, parcel.color, lw, op);
+                // Parcel Td only below the LCL, where it still differs from T.
+                const n_sub = result.k_lcl === -1 ? result.p.length : result.k_lcl + 1;
+                parcel_path(result.p.slice(0, n_sub), result.Td.slice(0, n_sub), parcel.color, lw, op);
+
+                if (result.k_lcl > 0) { parcel_marker(result.k_lcl, false); markers_drawn.cloud_base = true; }
+                if (result.stopped)   { parcel_marker(result.k_top, true);  markers_drawn.plume_top  = true; }
             });
+
+            if (w_panel) draw_w_panel(w_panel, y, H, drawn);
         }
 
         function get_surface_state(parcel)
@@ -841,7 +850,7 @@ function draw_skewt()
             const path = chart.append("path").datum(pts)
                 .attr("fill", "none")
                 .attr("stroke", color)
-                .attr("stroke-width", 2.5)
+                .attr("stroke-width", LW_PROFILE)
                 .attr("d", line);
 
             const drag = d3.drag()
@@ -904,28 +913,22 @@ function draw_skewt()
                 return dewpoint(s.qt_sfc + s.dq, s.p_sfc_pa);
             };
 
-            const T_node = chart.append("circle")
-                .attr("cx", x(skew_transform(surf0.T_env_sfc + surf0.dtheta * surf0.exner_sfc, sfc_p_hpa_marker)))
-                .attr("cy", y(sfc_p_hpa_marker))
-                .attr("r", 5)
+            const y_sfc  = y(sfc_p_hpa_marker);
+            const handle = (cx) => chart.append("path")
+                .attr("d", "M0,-6L6,0L0,6L-6,0Z")
+                .attr("transform", `translate(${cx},${y_sfc})`)
                 .attr("fill", "white")
                 .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
                 .style("cursor", "grab");
 
-            const Td_node = chart.append("circle")
-                .attr("cx", x(skew_transform(dewpoint(surf0.qt_sfc + surf0.dq, surf0.p_sfc_pa), sfc_p_hpa_marker)))
-                .attr("cy", y(sfc_p_hpa_marker))
-                .attr("r", 5)
-                .attr("fill", "white")
-                .attr("stroke", edit_parcel.color)
-                .attr("stroke-width", 2)
-                .style("cursor", "grab");
+            const T_node  = handle(x(skew_transform(surf0.T_env_sfc + surf0.dtheta * surf0.exner_sfc, sfc_p_hpa_marker)));
+            const Td_node = handle(x(skew_transform(dewpoint(surf0.qt_sfc + surf0.dq, surf0.p_sfc_pa), sfc_p_hpa_marker)));
 
             const reposition_markers = () =>
             {
-                T_node.attr("cx",  x(skew_transform(T_marker_val(),  sfc_p_hpa_marker)));
-                Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
+                T_node.attr("transform",  `translate(${x(skew_transform(T_marker_val(),  sfc_p_hpa_marker))},${y_sfc})`);
+                Td_node.attr("transform", `translate(${x(skew_transform(Td_marker_val(), sfc_p_hpa_marker))},${y_sfc})`);
             };
 
             const make_drag = (axis) => d3.drag()
@@ -960,11 +963,11 @@ function draw_skewt()
 
         chart.append("path").datum(t_pts)
             .attr("fill", "none").attr("stroke", color_T)
-            .attr("stroke-width", 2.5).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
 
         chart.append("path").datum(td_pts)
             .attr("fill", "none").attr("stroke", color_Td)
-            .attr("stroke-width", 2.5).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
     }
 
     if ((model_sounding && show_model) || obs_sounding)
@@ -981,9 +984,13 @@ function draw_skewt()
             legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: "6,3" });
             legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
         }
-        if (model_sounding && show_model)
+        if (model_sounding && show_model && parcels.some(p => p.visible))
+        {
             parcels.filter(p => p.visible).forEach(p =>
-                legend_items.push({ label: p.name, color: p.color, dashes: "6,3" }));
+                legend_items.push({ label: p.name, color: p.color, active: p.id === active_parcel_id }));
+            if (markers_drawn.cloud_base) legend_items.push({ label: "cloud base", marker: "open"   });
+            if (markers_drawn.plume_top)  legend_items.push({ label: "plume top",  marker: "filled" });
+        }
 
         const line_len = 22;
         const row_h    = 22;
@@ -993,16 +1000,25 @@ function draw_skewt()
         legend_items.forEach((item, i) =>
         {
             const y_off = i * row_h;
-            legend.append("line")
-                .attr("x1", 0).attr("x2", line_len)
-                .attr("y1", y_off + 6).attr("y2", y_off + 6)
-                .attr("stroke", item.color)
-                .attr("stroke-width", 2.5)
-                .attr("stroke-dasharray", item.dashes ?? null);
+            if (item.marker)
+                legend.append("circle")
+                    .attr("cx", line_len / 2).attr("cy", y_off + 6).attr("r", 4)
+                    .attr("fill", item.marker === "filled" ? "#666" : "white")
+                    .attr("stroke", "#666")
+                    .attr("stroke-width", 1.6);
+            else
+                legend.append("line")
+                    .attr("x1", 0).attr("x2", line_len)
+                    .attr("y1", y_off + 6).attr("y2", y_off + 6)
+                    .attr("stroke", item.color)
+                    .attr("stroke-width", LW_PROFILE)
+                    .attr("stroke-dasharray", item.dashes ?? null)
+                    .attr("stroke-opacity", item.active === false ? OP_PARCEL_IDLE : 1);
             legend.append("text")
                 .attr("x", line_len + 6).attr("y", y_off + 10)
                 .attr("text-anchor", "start")
                 .style("font-size", font_size)
+                .style("font-weight", item.active ? 600 : 400)
                 .style("fill", "#333")
                 .text(item.label);
         });
