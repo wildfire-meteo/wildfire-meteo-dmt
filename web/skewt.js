@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
+import { calc_parcel_ascent } from "./parcel.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
@@ -207,12 +207,10 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     draw_skewt();
 });
 
-// Only the entraining plume has a w, so gate the panel on the mode.
 function sync_w_panel_control()
 {
     document.getElementById("show_w_panel").disabled =
-        !document.getElementById("launch_parcel").checked ||
-        document.getElementById("parcel_mode").value !== "entraining";
+        !document.getElementById("launch_parcel").checked;
 }
 
 document.getElementById("launch_parcel").addEventListener("change", () =>
@@ -644,70 +642,58 @@ function draw_skewt()
             const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
             const surf      = get_surface_state();
 
-            const T_s  = surf.T_env_sfc + surf.dtheta * surf.exner_sfc;
-            const Td_s = dewpoint(surf.qt_sfc + surf.dq, surf.p_sfc_pa);
-
             // Index of the first pressure level strictly above the surface.
             // p_pa_all is sorted descending (highest pressure first).
             const idx_above = p_pa_all.findIndex(p => p < surf.p_sfc_pa);
+            if (idx_above === -1) return;
 
-            if (mode === "non_entraining")
-            {
-                // Parcel grid: surface pressure + all levels above it.
-                const p_above = idx_above === -1 ? [] : p_pa_all.slice(idx_above);
-                const p_parcel = [surf.p_sfc_pa, ...p_above].sort((a, b) => b - a);
+            // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+            const z_sfc_agl = 0;
 
-                const parcel = calc_non_entraining_parcel(T_s, Td_s, surf.p_sfc_pa, p_parcel);
+            // Environment: surface point followed by all levels above the surface.
+            const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
+            const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
+            const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
+            const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
 
-                draw_parcel_segments([
-                    [parcel.p_dry,     parcel.T_dry],
-                    [parcel.p_isohume, parcel.T_isohume],
-                    [parcel.p_moist,   parcel.T_moist],
-                ]);
-            }
-            else if (mode === "entraining")
-            {
-                if (idx_above === -1) return;
+            const area = 10 ** +document.getElementById("fire_area").value;
 
-                // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
-                const z_sfc_agl = 0;
+            // "Non-entraining" is the entraining plume with entrainment switched off: the
+            // parcel then just conserves its initial thetal/qt with height (classic parcel
+            // theory) while still accelerating under buoyancy alone. It needs a nominal
+            // non-zero w0 to seed the integration (buoyancy takes over from there), since
+            // w0 == 0 (no fire perturbation) would otherwise stall the ascent immediately.
+            const w0_eps = 1e-3;
+            const fac_ent = mode === "non_entraining" ? 0 : undefined;
+            const w0      = mode === "non_entraining" ? Math.max(surf.w0, w0_eps) : surf.w0;
 
-                // Environment: surface point followed by all levels above the surface.
-                const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
-                const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
-                const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
-                const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+            const parcel = calc_parcel_ascent(
+                z_env, T_env, Td_env, p_env,
+                surf.dtheta, surf.dq, w0, area,
+                { fac_ent, z_max: z_env[z_env.length - 1] },
+            );
 
-                const area = 10 ** +document.getElementById("fire_area").value;
+            if (w_panel) draw_w_panel(w_panel, y, H, parcel);
 
-                const parcel = calc_entraining_parcel(
-                    z_env, T_env, Td_env, p_env,
-                    surf.dtheta, surf.dq, surf.w0, area,
-                    { z_max: 12000 },
-                );
+            if (parcel.p.length === 0) return;
 
-                if (w_panel) draw_w_panel(w_panel, y, H, parcel);
+            // Plume top, tying the panel back to the sounding.
+            if (w_panel)
+                chart.append("line")
+                    .attr("class", "parcel-path")
+                    .attr("x1", 0).attr("y1", y(parcel.p[parcel.p.length - 1] / 100))
+                    .attr("x2", W).attr("y2", y(parcel.p[parcel.p.length - 1] / 100))
+                    .attr("stroke", "#888")
+                    .attr("stroke-width", 1)
+                    .attr("stroke-dasharray", "2,3");
 
-                if (parcel.p.length === 0) return;
-
-                // Plume top, tying the panel back to the sounding.
-                if (w_panel)
-                    chart.append("line")
-                        .attr("class", "parcel-path")
-                        .attr("x1", 0).attr("y1", y(parcel.p[parcel.p.length - 1] / 100))
-                        .attr("x2", W).attr("y2", y(parcel.p[parcel.p.length - 1] / 100))
-                        .attr("stroke", "#888")
-                        .attr("stroke-width", 1)
-                        .attr("stroke-dasharray", "2,3");
-
-                // T for the full ascent; Td only below LCL (where type == 0).
-                const lcl_idx = parcel.type.indexOf(1);
-                const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
-                draw_parcel_segments([
-                    [parcel.p,                 parcel.T],
-                    [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
-                ]);
-            }
+            // T for the full ascent; Td only below LCL (where type == 0).
+            const lcl_idx = parcel.type.indexOf(1);
+            const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
+            draw_parcel_segments([
+                [parcel.p,                 parcel.T],
+                [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
+            ]);
         }
 
         function get_surface_state()

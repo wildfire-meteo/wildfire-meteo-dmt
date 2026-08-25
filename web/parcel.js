@@ -69,38 +69,7 @@ export function find_lcl(T_sfc, Td_sfc, p_sfc, tol=5)
 }
 
 
-export function calc_non_entraining_parcel(T_sfc, Td_sfc, p_sfc, p)
-{
-    // p must be in Pa, sorted descending (surface to top).
-    const theta_sfc = T_sfc / exner(p_sfc);
-    const q_sfc     = qsat(Td_sfc, p_sfc);
-    const { p_lcl, T_lcl } = find_lcl(T_sfc, Td_sfc, p_sfc);
-
-    // Below LCL: isohume and dry adiabat.
-    const p_dry    = [...p.filter(pi => pi >= p_lcl), p_lcl];
-    const T_dry    = p_dry.map(pi => theta_sfc * exner(pi));
-    const T_isohume = p_dry.map(pi => dewpoint(q_sfc, pi));
-
-    // Above LCL: moist adiabat on a geomspace grid matching the background resolution.
-    const p_top    = Math.min(...p);
-    const log_step = Math.log(105000 / 10000) / (200 - 1);
-    const n_moist  = Math.round(Math.log(p_lcl / p_top) / log_step) + 1;
-    const p_moist  = Array.from({ length: n_moist }, (_, i) =>
-        Math.exp(Math.log(p_lcl) + i * (Math.log(p_top) - Math.log(p_lcl)) / (n_moist - 1)));
-    const T_moist = calc_moist_adiabat(T_lcl, p_moist);
-
-    return {
-        T_isohume,
-        p_isohume: p_dry,
-        T_dry,
-        p_dry,
-        T_moist,
-        p_moist,
-    };
-}
-
-
-export function calc_entraining_parcel(
+export function calc_parcel_ascent(
     z_env, T_env, Td_env, p_env,
     dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s,
     {
