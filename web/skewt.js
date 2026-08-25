@@ -216,29 +216,57 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
 
 function render_parcel_list()
 {
-    const select = document.getElementById("parcel_select");
-    select.innerHTML = "";
+    const list = document.getElementById("parcel_list");
+    list.innerHTML = "";
 
     parcels.forEach(p =>
     {
-        const opt = document.createElement("option");
-        opt.value = p.id;
-        opt.textContent = p.name;
-        select.appendChild(opt);
-    });
-    select.value = active_parcel_id ?? "";
+        const row = document.createElement("div");
+        row.className = "parcel-row" + (p.id === active_parcel_id ? " active" : "");
+        row.dataset.id = p.id;
 
-    document.getElementById("add_parcel_btn").disabled = !model_sounding || parcels.length >= MAX_PARCELS;
-    document.getElementById("clone_parcel_btn").disabled = active_parcel_id === null || parcels.length >= MAX_PARCELS;
-    document.getElementById("remove_parcel_btn").disabled = parcels.length === 0;
+        const swatch = document.createElement("span");
+        swatch.className = "parcel-swatch";
+        swatch.style.background = p.color;
+
+        const vis = document.createElement("input");
+        vis.type = "checkbox";
+        vis.checked = p.visible;
+        vis.title = "Show on plot";
+        vis.addEventListener("click", e => e.stopPropagation());
+        vis.addEventListener("change", () => { p.visible = vis.checked; draw_skewt(); });
+
+        const name = document.createElement("input");
+        name.type = "text";
+        name.className = "parcel-name-input";
+        name.value = p.name;
+        name.addEventListener("input", () => { p.name = name.value || p.name; });
+
+        row.append(swatch, vis, name);
+        row.addEventListener("click", () => select_parcel(p.id));
+        list.appendChild(row);
+    });
+
+    update_parcel_buttons();
     sync_w_panel_control();
 }
 
+function update_parcel_buttons()
+{
+    document.getElementById("add_parcel_btn").disabled = !model_sounding || parcels.length >= MAX_PARCELS;
+    document.getElementById("clone_parcel_btn").disabled = active_parcel_id === null || parcels.length >= MAX_PARCELS;
+    document.getElementById("remove_parcel_btn").disabled = parcels.length === 0;
+}
+
+// Cheap re-selection: only toggles the active row's highlight, so it never
+// tears down list DOM (which would drop focus out of an in-edit name field).
 function select_parcel(id)
 {
     active_parcel_id = id;
+    document.querySelectorAll("#parcel_list .parcel-row").forEach(row =>
+        row.classList.toggle("active", +row.dataset.id === id));
+    update_parcel_buttons();
     load_parcel_into_editor();
-    render_parcel_list();
     draw_skewt();
 }
 
@@ -252,14 +280,12 @@ function remove_parcel(id)
     draw_skewt();
 }
 
-document.getElementById("parcel_select").addEventListener("change", (e) =>
-    select_parcel(+e.target.value));
-
 document.getElementById("add_parcel_btn").addEventListener("click", () =>
 {
     if (parcels.length >= MAX_PARCELS) return;
     const p = make_parcel(parcels);
     parcels.push(p);
+    render_parcel_list();
     select_parcel(p.id);
 });
 
@@ -274,6 +300,7 @@ document.getElementById("clone_parcel_btn").addEventListener("click", () =>
     p.dtheta = src.dtheta;
     p.dq = src.dq;
     parcels.push(p);
+    render_parcel_list();
     select_parcel(p.id);
 });
 
@@ -290,7 +317,6 @@ function load_parcel_into_editor()
     document.getElementById("no_parcel_note").style.display = p ? "none" : "";
     if (!p) return;
 
-    document.getElementById("parcel_name_input").value = p.name;
     document.getElementById("parcel_mode").value = p.mode;
     document.getElementById("fire_area").value = p.fire_area;
 
@@ -306,13 +332,6 @@ function sync_w_panel_control()
     document.getElementById("show_w_panel").disabled = parcels.length === 0;
 }
 
-document.getElementById("parcel_name_input").addEventListener("input", (e) =>
-{
-    const p = active_parcel();
-    if (!p) return;
-    p.name = e.target.value || p.name;
-    render_parcel_list();
-});
 document.getElementById("parcel_mode").addEventListener("change", (e) =>
 {
     const p = active_parcel();
@@ -739,7 +758,7 @@ function draw_skewt()
 
             const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
 
-            parcels.forEach(p =>
+            parcels.filter(p => p.visible).forEach(p =>
             {
                 const surf = get_surface_state(p);
 
@@ -952,7 +971,7 @@ function draw_skewt()
             legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
         }
         if (model_sounding && show_model)
-            parcels.forEach(p =>
+            parcels.filter(p => p.visible).forEach(p =>
                 legend_items.push({ label: p.name, color: p.color, dashes: "6,3" }));
 
         const line_len = 22;

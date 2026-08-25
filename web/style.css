@@ -274,6 +274,53 @@ main {
     font-size: 1rem;
 }
 
+.parcel-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+}
+
+.parcel-row.active {
+    background: var(--color-bg);
+    border-left-color: var(--color-accent);
+    border-right-color: var(--color-accent);
+}
+
+.parcel-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.sidebar input.parcel-name-input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: none;
+    padding: 0.05rem 0.3rem;
+    font-family: inherit;
+    font-size: 0.875rem;
+    line-height: 1.3;
+    width: auto;
+    color: var(--color-text);
+}
+
+.sidebar input.parcel-name-input:hover {
+    border-color: var(--color-border-mid);
+}
+
+.sidebar input.parcel-name-input:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    background: var(--color-surface);
+}
+
 .button-row {
     display: flex;
     gap: 0.5rem;

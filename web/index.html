@@ -138,10 +138,7 @@
                 <details class="section" open>
                     <summary><span class="material-icons">switch_access_shortcut</span> Parcels</summary>
                     <div class="section-body">
-                        <label>
-                            Parcel
-                            <select id="parcel_select"></select>
-                        </label>
+                        <div id="parcel_list"></div>
                         <div class="button-row">
                             <button id="add_parcel_btn" disabled title="Add parcel">
                                 <span class="material-icons">add</span>
@@ -166,10 +163,6 @@
                         </span>
 
                         <div id="parcel_editor" class="section-body" style="display:none; padding: 0;">
-                            <label>
-                                Name
-                                <input type="text" id="parcel_name_input">
-                            </label>
                             <label>
                                 Mode
                                 <select id="parcel_mode">
