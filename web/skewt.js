@@ -41,9 +41,18 @@ let current_time = 0;
 
 const fire_state = { dtheta: 0, dq: 0 };
 
-const color_T   = "#EB0056";
-const color_Td  = "#0056EB";
-const font_size = "14px";
+const color_T     = "#EB0056";
+const color_Td    = "#0056EB";
+const color_w_sat = "#00A6FF";
+const font_size   = "14px";
+
+// Vertical velocity panel. Dropped when the main plot would fall below MIN_MAIN_W.
+const W_PANEL_W     = 100;
+const W_PANEL_RIGHT = 30;
+const MIN_MAIN_W    = 320;
+
+// Coarse ladder for the w axis, so the domain stays stable while sliders are dragged.
+const W_AXIS_LADDER = [10, 20, 30, 50, 100];
 
 // Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
 // the observed T/Td profile before interpolating onto the model's pressure
@@ -198,8 +207,27 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     draw_skewt();
 });
 
-document.getElementById("launch_parcel").addEventListener("change", draw_skewt);
-document.getElementById("parcel_mode").addEventListener("change", draw_skewt);
+// Only the entraining plume has a w, so gate the panel on the mode.
+function sync_w_panel_control()
+{
+    document.getElementById("show_w_panel").disabled =
+        !document.getElementById("launch_parcel").checked ||
+        document.getElementById("parcel_mode").value !== "entraining";
+}
+
+document.getElementById("launch_parcel").addEventListener("change", () =>
+{
+    sync_w_panel_control();
+    draw_skewt();
+});
+document.getElementById("parcel_mode").addEventListener("change", () =>
+{
+    sync_w_panel_control();
+    draw_skewt();
+});
+// Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
+document.getElementById("show_w_panel").addEventListener("change", () =>
+    zoom.transform(svg, d3.zoomIdentity));
 document.getElementById("fire_area").addEventListener("input", (e) =>
 {
     const area_km2 = 10 ** (+e.target.value - 6);
@@ -337,6 +365,109 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
     });
 }
 
+// Dynamic content of the w panel, redrawn on every drag tick. Shares y with the
+// main plot; the frame is drawn once per draw_skewt.
+function draw_w_panel(panel, y, H, parcel)
+{
+    const dyn = panel.append("g").attr("class", "w-panel-dyn");
+
+    if (parcel.w.length === 0)
+    {
+        ["Raise the sensible", "heat flux to", "launch a plume"].forEach((msg, i) =>
+            dyn.append("text")
+                .attr("x", W_PANEL_W / 2).attr("y", H / 2 + i * 15)
+                .attr("text-anchor", "middle")
+                .attr("font-size", "11px").attr("fill", "#888")
+                .text(msg));
+        return;
+    }
+
+    const w_max = Math.max(...parcel.w);
+    const w_top = W_AXIS_LADDER.find(v => v >= w_max) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
+    const xw    = d3.scaleLinear().domain([0, w_top]).range([0, W_PANEL_W]);
+    const ticks = [0, w_top / 2, w_top];
+
+    ticks.forEach(w =>
+        dyn.append("line")
+            .attr("x1", xw(w)).attr("y1", 0)
+            .attr("x2", xw(w)).attr("y2", H)
+            .attr("stroke", "rgba(179,179,179,0.5)")
+            .attr("stroke-width", 1));
+
+    const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
+    const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
+    const pts  = parcel.w.map((w, i) => [w, parcel.p[i] / 100]);
+
+    // Split at condensation, so the saturated part of the plume reads as moist.
+    const k_cond = parcel.type.indexOf(1);
+    const segments = k_cond === -1
+        ? [[pts, "#000"]]
+        : [[pts.slice(0, k_cond + 1), "#000"], [pts.slice(k_cond), color_w_sat]];
+
+    segments.forEach(([seg, color]) =>
+        clip.append("path").datum(seg)
+            .attr("fill", "none")
+            .attr("stroke", color)
+            .attr("stroke-width", 2)
+            .attr("d", line));
+
+    const k_max = parcel.w.indexOf(w_max);
+    const x_max = xw(w_max);
+    const y_max = y(parcel.p[k_max] / 100);
+    const flip  = x_max > W_PANEL_W / 2;
+
+    clip.append("circle")
+        .attr("cx", x_max).attr("cy", y_max).attr("r", 3).attr("fill", "#000");
+    clip.append("text")
+        .attr("x", flip ? x_max - 6 : x_max + 6)
+        .attr("y", y_max - 6)
+        .attr("text-anchor", flip ? "end" : "start")
+        .attr("font-size", "11px").attr("fill", "#000")
+        .text(`${w_max.toFixed(1)} m/s`);
+
+    const p_top_plume = parcel.p[parcel.p.length - 1] / 100;
+    const z_top       = parcel.z[parcel.z.length - 1];
+
+    clip.append("line")
+        .attr("x1", 0).attr("y1", y(p_top_plume))
+        .attr("x2", W_PANEL_W).attr("y2", y(p_top_plume))
+        .attr("stroke", "#888")
+        .attr("stroke-width", 1)
+        .attr("stroke-dasharray", "2,3");
+    clip.append("text")
+        .attr("x", W_PANEL_W - 4).attr("y", y(p_top_plume) - 5)
+        .attr("text-anchor", "end")
+        .attr("font-size", "11px").attr("fill", "#666")
+        .text(`${(z_top / 1000).toFixed(1)} km`);
+
+    // Top of the buoyant layer; the plume coasts from here to its top.
+    const k_nb = parcel.buoy.findLastIndex(b => b >= 0);
+    if (k_nb > 0 && k_nb < parcel.buoy.length - 1)
+    {
+        const y_nb    = y(parcel.p[k_nb] / 100);
+        const nb_flip = xw(parcel.w[k_nb]) > W_PANEL_W / 2;
+
+        clip.append("line")
+            .attr("x1", 0).attr("y1", y_nb)
+            .attr("x2", W_PANEL_W).attr("y2", y_nb)
+            .attr("stroke", "#888")
+            .attr("stroke-width", 1)
+            .attr("stroke-dasharray", "2,3");
+        // Shallow plumes stack all three annotations, so only label when it sits clear.
+        if (y_max - y_nb > 14 && y_nb - y(p_top_plume) > 14)
+            clip.append("text")
+                .attr("x", nb_flip ? 4 : W_PANEL_W - 4).attr("y", y_nb - 5)
+                .attr("text-anchor", nb_flip ? "start" : "end")
+                .attr("font-size", "11px").attr("fill", "#666")
+                .text("B = 0");
+    }
+
+    dyn.append("g")
+        .attr("transform", `translate(0,${H})`)
+        .call(d3.axisBottom(xw).tickValues(ticks))
+        .selectAll("text").style("font-size", font_size);
+}
+
 // Returns surface thermodynamic base state from model_sounding, or null if unavailable.
 function get_surface_base()
 {
@@ -362,7 +493,18 @@ function draw_skewt()
 {
     svg.selectAll("*").remove();
 
-    const W = svg.node().clientWidth - margin.left - margin.right;
+    const show_model = document.getElementById("show_model_sounding").checked;
+
+    const w_avail = svg.node().clientWidth - margin.left - margin.right;
+
+    const w_panel_el     = document.getElementById("show_w_panel");
+    const w_panel_wanted = w_panel_el.checked && !w_panel_el.disabled && model_sounding && show_model;
+    const w_panel_on     = w_panel_wanted && w_avail - W_PANEL_W - W_PANEL_RIGHT >= MIN_MAIN_W;
+
+    document.getElementById("w_panel_note").style.display =
+        w_panel_wanted && !w_panel_on ? "" : "none";
+
+    const W = w_panel_on ? w_avail - W_PANEL_W - W_PANEL_RIGHT : w_avail;
 
     const headerEl  = document.querySelector('header');
     const toolbarEl = document.querySelector('.plot-toolbar');
@@ -398,8 +540,6 @@ function draw_skewt()
     if (document.getElementById("show_isobars").checked)
         draw_isobars(chart, y, W);
 
-    const show_model = document.getElementById("show_model_sounding").checked;
-
     if (model_sounding && show_model && model_sounding.z)
         draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z, model_sounding.surface_pressure_hpa);
 
@@ -417,6 +557,29 @@ function draw_skewt()
             draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       "rgba(214,39,40,0.5)");
         if (document.getElementById("show_moist_adiabats").checked)
             draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     "rgba(13,145,70,0.5)");
+    }
+
+    // No vertical axis: y is shared, and margin.right keeps the barbs clear.
+    let w_panel = null;
+    if (w_panel_on)
+    {
+        w_panel = g.append("g").attr("transform", `translate(${W + margin.right},0)`);
+
+        w_panel.append("rect")
+            .attr("width", W_PANEL_W).attr("height", H)
+            .attr("fill", "white").attr("stroke", "#ccc");
+
+        w_panel.append("clipPath").attr("id", "w-panel-clip")
+            .append("rect").attr("width", W_PANEL_W).attr("height", H);
+
+        if (document.getElementById("show_isobars").checked)
+            draw_isobars(w_panel.append("g").attr("clip-path", "url(#w-panel-clip)"), y, W_PANEL_W);
+
+        w_panel.append("text")
+            .attr("x", W_PANEL_W / 2).attr("y", H + 38)
+            .attr("text-anchor", "middle")
+            .style("font-size", font_size)
+            .text("w (m/s)");
     }
 
     if (model_sounding && show_model)
@@ -456,6 +619,7 @@ function draw_skewt()
         function redraw_parcel()
         {
             chart.selectAll(".parcel-path").remove();
+            if (w_panel) w_panel.selectAll(".w-panel-dyn").remove();
 
             if (!document.getElementById("launch_parcel").checked) return;
 
@@ -522,7 +686,19 @@ function draw_skewt()
                     { z_max: 12000 },
                 );
 
+                if (w_panel) draw_w_panel(w_panel, y, H, parcel);
+
                 if (parcel.p.length === 0) return;
+
+                // Plume top, tying the panel back to the sounding.
+                if (w_panel)
+                    chart.append("line")
+                        .attr("class", "parcel-path")
+                        .attr("x1", 0).attr("y1", y(parcel.p[parcel.p.length - 1] / 100))
+                        .attr("x2", W).attr("y2", y(parcel.p[parcel.p.length - 1] / 100))
+                        .attr("stroke", "#888")
+                        .attr("stroke-width", 1)
+                        .attr("stroke-dasharray", "2,3");
 
                 // T for the full ascent; Td only below LCL (where type == 0).
                 const lcl_idx = parcel.type.indexOf(1);
