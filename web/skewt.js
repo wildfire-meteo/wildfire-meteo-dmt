@@ -55,10 +55,12 @@ const font_size   = "14px";
 // Line weights and opacities. Parcels sit above the construction lines, but only the
 // one under edit is fully opaque, so it reads first without hiding the others.
 const LW_PROFILE     = 2.5;
-const LW_PARCEL      = 2.4;
-const LW_PARCEL_IDLE = 2.0;
+const LW_PARCEL      = 2.6;
+const LW_PARCEL_IDLE = 1.8;
 const OP_PARCEL      = 1.0;
-const OP_PARCEL_IDLE = 0.85;
+// Full opacity even when idle: the palette is a lightness ramp, so fading a parcel would
+// read as the next shade up rather than as de-emphasis. Weight carries the emphasis.
+const OP_PARCEL_IDLE = 1.0;
 
 // Parcels are dashed, to set them apart from the soundings and the construction. The
 // dashes are long enough not to read as a dotted line where a parcel runs close to the
@@ -68,7 +70,7 @@ const DASH_PARCEL = "12,5";
 // Cloud base and plume top rules. Drawn for the parcel under edit only, and kept light:
 // they are grid lines, not another parcel line to read.
 const LW_LEVEL = 1;
-const OP_LEVEL = 0.5;
+const OP_LEVEL = 0.6;
 
 // Vertical velocity panel. Dropped when the main plot would fall below MIN_MAIN_W.
 const W_PANEL_W     = 100;

@@ -14,14 +14,13 @@
 // limitations under the License.
 //
 
-// One violet-to-magenta ramp: cool hues stay vivid on white right up to their light end,
-// where a warm ramp would fade to straw. The three steps take the widest arc the diagram
-// leaves free, from just clear of the blues (isohumes, Td) to just short of the pink
-// model T, and move in lightness as well as hue, so no de-emphasised parcel can be read
-// as the next one up the scale. They share a family with the isotherms, which are thin
-// and half-transparent against a heavy dashed parcel line. Capped at three to keep the
-// steps this far apart.
-export const PALETTE = ["#251188", "#aa17cf", "#ee2ba6"];
+// One neutral ramp: the diagram's colored families are all spoken for (red dry adiabats,
+// green moist adiabats, blue isohumes and Td, purple isotherms, pink model T), and grey
+// is the one axis that collides with none of them. The steps are spread as far apart in
+// lightness as the paper allows, and the parcel under edit is emphasised by weight alone
+// (see LW_PARCEL in skewt.js) rather than by opacity, which on a neutral ramp would just
+// restate the shade. Capped at three to keep the steps this far apart.
+export const PALETTE = ["#000000", "#666666", "#9e9e9e"];
 export const MAX_PARCELS = PALETTE.length;
 
 let next_id = 1;
