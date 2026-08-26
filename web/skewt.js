@@ -15,7 +15,7 @@
 //
 
 import { calc_parcel_ascent } from "./parcel.js";
-import { make_parcel, unique_name, MAX_PARCELS } from "./parcel_state.js";
+import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
@@ -241,50 +241,114 @@ function render_parcel_list()
     parcels.forEach(p =>
     {
         const row = document.createElement("div");
-        row.className = "parcel-row" + (p.id === active_parcel_id ? " active" : "");
-        row.dataset.id = p.id;
+        row.className = "parcel-row" + (p.id === active_parcel_id ? " active" : "")
+                                     + (p.visible ? "" : " hidden");
 
-        const swatch = document.createElement("span");
-        swatch.className = "parcel-swatch";
-        swatch.style.background = p.color;
+        // The color key doubles as the visibility toggle: filled on the plot, hollow off it.
+        const vis = document.createElement("span");
+        vis.className = "parcel-vis";
+        vis.title = p.visible ? "Hide on plot" : "Show on plot";
+        vis.innerHTML = '<span class="parcel-swatch"></span>';
+        const swatch = vis.firstChild;
+        if (p.visible) swatch.style.background = p.color;
+        else           swatch.style.boxShadow  = `inset 0 0 0 2px ${p.color}`;
+        vis.addEventListener("click", (e) =>
+        {
+            e.stopPropagation();
+            p.visible = !p.visible;
+            render_parcel_list();
+            draw_skewt();
+        });
 
-        const vis = document.createElement("input");
-        vis.type = "checkbox";
-        vis.checked = p.visible;
-        vis.title = "Show on plot";
-        vis.addEventListener("click", e => e.stopPropagation());
-        vis.addEventListener("change", () => { p.visible = vis.checked; draw_skewt(); });
+        const name = document.createElement("span");
+        name.className = "parcel-name";
+        name.textContent = p.name;
 
-        const name = document.createElement("input");
-        name.type = "text";
-        name.className = "parcel-name-input";
-        name.value = p.name;
-        name.addEventListener("input", () => { p.name = name.value || p.name; });
+        row.append(vis, name);
 
-        row.append(swatch, vis, name);
-        row.addEventListener("click", () => select_parcel(p.id));
+        // Only on the selected row, so a click on any other row just selects it.
+        if (p.id === active_parcel_id)
+        {
+            row.append(
+                row_icon("edit",   "Rename",         () => begin_rename(row, name, p)),
+                row_icon("delete", "Remove parcel",  () => remove_parcel(p.id)));
+        }
+        else row.addEventListener("click", () => select_parcel(p.id));
+
         list.appendChild(row);
     });
 
-    update_parcel_buttons();
+    // A slot rather than a button: creating a parcel and selecting it are one gesture.
+    if (parcels.length < MAX_PARCELS)
+    {
+        const add = document.createElement("div");
+        add.className = "parcel-row add" + (model_sounding ? "" : " disabled");
+        add.id = "add_parcel_row";
+        add.innerHTML = '<span class="material-icons">add</span>';
+        add.append(parcels.length ? "Copy to new parcel" : "New parcel");
+        if (model_sounding) add.addEventListener("click", add_parcel);
+        else add.title = "Fetch model data first";
+        list.appendChild(add);
+    }
+
     sync_w_panel_control();
 }
 
-function update_parcel_buttons()
+function row_icon(glyph, title, on_click)
 {
-    document.getElementById("add_parcel_btn").disabled = !model_sounding || parcels.length >= MAX_PARCELS;
-    document.getElementById("clone_parcel_btn").disabled = active_parcel_id === null || parcels.length >= MAX_PARCELS;
-    document.getElementById("remove_parcel_btn").disabled = parcels.length === 0;
+    const icon = document.createElement("span");
+    icon.className = `parcel-icon material-icons ${glyph}`;
+    icon.title = title;
+    icon.textContent = glyph;
+    icon.addEventListener("click", (e) => { e.stopPropagation(); on_click(); });
+    return icon;
 }
 
-// Cheap re-selection: only toggles the active row's highlight, so it never
-// tears down list DOM (which would drop focus out of an in-edit name field).
+// Swaps the label for an input until the edit is committed, then puts the label back.
+function begin_rename(row, label, p)
+{
+    if (row.querySelector(".parcel-name-input")) return;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "parcel-name parcel-name-input";
+    input.value = p.name;
+
+    // Re-rendering detaches the input, firing blur in turn; isConnected drops that pass.
+    const commit = () =>
+    {
+        if (!input.isConnected) return;
+        p.name = input.value.trim() || p.name;
+        render_parcel_list();
+        draw_skewt();
+    };
+
+    input.addEventListener("keydown", (e) =>
+    {
+        if (e.key === "Enter") commit();
+        else if (e.key === "Escape") { input.value = p.name; commit(); }
+    });
+    input.addEventListener("blur", commit);
+
+    row.replaceChild(input, label);
+    input.focus();
+    input.select();
+}
+
+function add_parcel()
+{
+    if (!model_sounding || parcels.length >= MAX_PARCELS) return;
+
+    const p = make_parcel(parcels, active_parcel());
+    parcels.push(p);
+    render_parcel_list();
+    select_parcel(p.id);
+}
+
 function select_parcel(id)
 {
     active_parcel_id = id;
-    document.querySelectorAll("#parcel_list .parcel-row").forEach(row =>
-        row.classList.toggle("active", +row.dataset.id === id));
-    update_parcel_buttons();
+    render_parcel_list();
     load_parcel_into_editor();
     draw_skewt();
 }
@@ -299,41 +363,11 @@ function remove_parcel(id)
     draw_skewt();
 }
 
-document.getElementById("add_parcel_btn").addEventListener("click", () =>
-{
-    if (parcels.length >= MAX_PARCELS) return;
-    const p = make_parcel(parcels);
-    parcels.push(p);
-    render_parcel_list();
-    select_parcel(p.id);
-});
-
-document.getElementById("clone_parcel_btn").addEventListener("click", () =>
-{
-    const src = active_parcel();
-    if (!src || parcels.length >= MAX_PARCELS) return;
-    const p = make_parcel(parcels);
-    p.name = unique_name(`${src.name} copy`, parcels);
-    p.mode = src.mode;
-    p.fire_area = src.fire_area;
-    p.dtheta = src.dtheta;
-    p.dq = src.dq;
-    parcels.push(p);
-    render_parcel_list();
-    select_parcel(p.id);
-});
-
-document.getElementById("remove_parcel_btn").addEventListener("click", () =>
-{
-    if (active_parcel_id !== null) remove_parcel(active_parcel_id);
-});
-
 function load_parcel_into_editor()
 {
     const p = active_parcel();
 
     document.getElementById("parcel_editor").style.display = p ? "" : "none";
-    document.getElementById("no_parcel_note").style.display = p ? "none" : "";
     if (!p) return;
 
     document.getElementById("parcel_mode").value = p.mode;
@@ -1258,6 +1292,7 @@ document.getElementById("download_btn").addEventListener("click", () =>
     });
 });
 
+render_parcel_list();
 draw_skewt();
 
 window.addEventListener("resize", draw_skewt);
