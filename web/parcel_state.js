@@ -14,10 +14,14 @@
 // limitations under the License.
 //
 
-// Hues deliberately kept clear of every other line on the diagram: red (dry adiabats),
-// green (moist adiabats), blue (isohumes, Td) and purple (isotherms). Ordered so the
-// first few parcels are the most distinct.
-export const PALETTE = ["#000000", "#e8710a", "#00857f", "#b5179e", "#7f7a00", "#7a4a2a"];
+// One violet-to-magenta ramp: cool hues stay vivid on white right up to their light end,
+// where a warm ramp would fade to straw. The three steps take the widest arc the diagram
+// leaves free, from just clear of the blues (isohumes, Td) to just short of the pink
+// model T, and move in lightness as well as hue, so no de-emphasised parcel can be read
+// as the next one up the scale. They share a family with the isotherms, which are thin
+// and half-transparent against a heavy dashed parcel line. Capped at three to keep the
+// steps this far apart.
+export const PALETTE = ["#251188", "#aa17cf", "#ee2ba6"];
 export const MAX_PARCELS = PALETTE.length;
 
 let next_id = 1;

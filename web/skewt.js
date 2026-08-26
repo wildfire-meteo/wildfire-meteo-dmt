@@ -43,9 +43,6 @@ let current_time = 0;
 let parcels = [];
 let active_parcel_id = null;
 
-// Which parcel markers the last draw put on the plot, so the legend explains only those.
-let markers_drawn = { cloud_base: false, plume_top: false };
-
 function active_parcel()
 {
     return parcels.find(p => p.id === active_parcel_id) ?? null;
@@ -59,9 +56,19 @@ const font_size   = "14px";
 // one under edit is fully opaque, so it reads first without hiding the others.
 const LW_PROFILE     = 2.5;
 const LW_PARCEL      = 2.4;
-const LW_PARCEL_IDLE = 1.7;
+const LW_PARCEL_IDLE = 2.0;
 const OP_PARCEL      = 1.0;
-const OP_PARCEL_IDLE = 0.8;
+const OP_PARCEL_IDLE = 0.85;
+
+// Parcels are dashed, to set them apart from the soundings and the construction. The
+// dashes are long enough not to read as a dotted line where a parcel runs close to the
+// isobars (4,3) or an observed sounding (6,3).
+const DASH_PARCEL = "12,5";
+
+// Cloud base and plume top rules. Drawn for the parcel under edit only, and kept light:
+// they are grid lines, not another parcel line to read.
+const LW_LEVEL = 1;
+const OP_LEVEL = 0.5;
 
 // Vertical velocity panel. Dropped when the main plot would fall below MIN_MAIN_W.
 const W_PANEL_W     = 100;
@@ -535,6 +542,24 @@ function draw_w_panel(panel, y, H, entries)
             .attr("stroke", "rgba(179,179,179,0.5)")
             .attr("stroke-width", 1));
 
+    // Cloud base and plume top of the parcel under edit, continued from the sounding so
+    // the two panels read off the same levels.
+    const active = entries.find(e => e.is_active);
+    if (active)
+    {
+        const level_rule = (p_hpa) =>
+            dyn.append("line")
+                .attr("x1", 0).attr("y1", y(p_hpa))
+                .attr("x2", W_PANEL_W).attr("y2", y(p_hpa))
+                .attr("stroke", active.parcel.color)
+                .attr("stroke-width", LW_LEVEL)
+                .attr("stroke-opacity", OP_LEVEL)
+                .attr("stroke-dasharray", "4,3");
+
+        if (active.result.k_lcl > 0)              level_rule(active.result.p[active.result.k_lcl] / 100);
+        if (active.result.stopped && active.result.k_top > 0) level_rule(active.result.p[active.result.k_top] / 100);
+    }
+
     const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
     const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
 
@@ -549,24 +574,11 @@ function draw_w_panel(panel, y, H, entries)
             .attr("stroke", parcel.color)
             .attr("stroke-width", lw)
             .attr("stroke-opacity", op)
+            .attr("stroke-dasharray", DASH_PARCEL)
             .attr("d", line);
 
-        // Cloud base, drawn with the same open marker as on the sounding so the two panels tie together.
-        if (result.k_lcl > 0 && result.k_lcl <= result.k_top)
-            clip.append("circle")
-                .attr("cx", xw(result.w[result.k_lcl])).attr("cy", y(result.p[result.k_lcl] / 100))
-                .attr("r", is_active ? 4 : 3)
-                .attr("fill", "white").attr("stroke", parcel.color)
-                .attr("stroke-width", 1.6).attr("opacity", op);
-
-        if (result.stopped)
-            clip.append("circle")
-                .attr("cx", xw(result.w[result.k_top])).attr("cy", y(result.p[result.k_top] / 100))
-                .attr("r", is_active ? 4 : 3)
-                .attr("fill", parcel.color).attr("opacity", op);
-
-        // w_max for the parcel in focus. Labelled but not marked: a dot here would read
-        // as a plume top.
+        // w_max for the parcel in focus. Labelled but not marked, so a circle on the
+        // diagram only ever means a draggable surface value.
         if (!is_active) return;
 
         const w_max = Math.max(...result.w);
@@ -795,11 +807,57 @@ function draw_skewt()
                     .attr("stroke", color)
                     .attr("stroke-width", width)
                     .attr("stroke-opacity", opacity)
+                    .attr("stroke-dasharray", DASH_PARCEL)
                     .attr("d", parcel_line);
 
-            markers_drawn = { cloud_base: false, plume_top: false };
+            // Cloud base and plume top as levels rather than markers: a dashed rule across
+            // the plot in the parcel's own color, annotated like the surface line. Labels
+            // are collected and placed after all parcels are drawn, so overlapping ones can
+            // be spread out without ending up out of height order.
+            const levels = [];
 
-            // Active parcel last, so its line and markers end up on top of the others.
+            const parcel_level = (p_hpa, text, color) =>
+            {
+                const y_lev = y(p_hpa);
+                levels.push({ y_lev, text, color });
+
+                chart.append("line")
+                    .attr("class", "parcel-path")
+                    .attr("x1", 0).attr("y1", y_lev)
+                    .attr("x2", W).attr("y2", y_lev)
+                    .attr("stroke", color)
+                    .attr("stroke-width", LW_LEVEL)
+                    .attr("stroke-opacity", OP_LEVEL)
+                    .attr("stroke-dasharray", "4,3");
+            };
+
+            const draw_level_labels = () =>
+            {
+                const label_x = W - 4 - STAFF_LEN * Math.min(1, H / 600);
+                const row     = 13;
+
+                // Spread from the top down, then lift the whole stack clear of the surface
+                // label, which is fixed: a plume that barely leaves the ground otherwise
+                // lands its label straight on top of it.
+                let y_prev = -Infinity;
+                const placed = levels.sort((a, b) => a.y_lev - b.y_lev)
+                    .map(l => ({ ...l, y_txt: (y_prev = Math.max(l.y_lev - 3, y_prev + row)) }));
+
+                const y_sfc_label = y(sfc_p_hpa) - 3;
+                const overlap = placed.length
+                    ? placed[placed.length - 1].y_txt - (y_sfc_label - row) : 0;
+
+                placed.forEach(({ text, color, y_txt }) =>
+                    chart.append("text")
+                        .attr("class", "parcel-path")
+                        .attr("x", label_x).attr("y", y_txt - Math.max(0, overlap))
+                        .attr("text-anchor", "end")
+                        .attr("font-size", "11px")
+                        .attr("fill", color)
+                        .text(text));
+            };
+
+            // Active parcel last, so its line and labels end up on top of the others.
             const drawn = parcels
                 .filter(p => p.visible)
                 .sort((a, b) => (a.id === active_parcel_id) - (b.id === active_parcel_id))
@@ -810,30 +868,26 @@ function draw_skewt()
             {
                 const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
                 const op = is_active ? OP_PARCEL : OP_PARCEL_IDLE;
-                const r  = is_active ? 4 : 3;
 
-                // Cloud base (open) and the level where the plume stops (filled).
-                const parcel_marker = (k, filled) =>
-                    chart.append("circle")
-                        .attr("class", "parcel-path")
-                        .attr("cx", x(skew_transform(result.T[k], result.p[k] / 100)))
-                        .attr("cy", y(result.p[k] / 100))
-                        .attr("r", r)
-                        .attr("fill", filled ? parcel.color : "white")
-                        .attr("stroke", parcel.color)
-                        .attr("stroke-width", 1.6)
-                        .attr("opacity", op);
-
-                // A non-entraining path continues above where the plume stops; the marker,
-                // not a break in the line, is what says the plume got no further.
+                // A non-entraining path continues above where the plume stops; the plume-top
+                // level, not a break in the line, is what says the plume got no further.
                 parcel_path(result.p, result.T, parcel.color, lw, op);
                 // Parcel Td only below the LCL, where it still differs from T.
                 const n_sub = result.k_lcl === -1 ? result.p.length : result.k_lcl + 1;
                 parcel_path(result.p.slice(0, n_sub), result.Td.slice(0, n_sub), parcel.color, lw, op);
 
-                if (result.k_lcl > 0) { parcel_marker(result.k_lcl, false); markers_drawn.cloud_base = true; }
-                if (result.stopped)   { parcel_marker(result.k_top, true);  markers_drawn.plume_top  = true; }
+                // Levels for the parcel under edit only: three parcels' worth of rules and
+                // labels is a thicket, and the emphasised parcel is the one being read.
+                if (!is_active) return;
+
+                if (result.k_lcl > 0)
+                    parcel_level(result.p[result.k_lcl] / 100, `cloud base: ${Math.round(result.z[result.k_lcl])} m`, parcel.color);
+                // A plume top at the surface is no plume at all; the surface line says it.
+                if (result.stopped && result.k_top > 0)
+                    parcel_level(result.p[result.k_top] / 100, `plume top: ${Math.round(result.z[result.k_top])} m`, parcel.color);
             });
+
+            draw_level_labels();
 
             if (w_panel) draw_w_panel(w_panel, y, H, drawn);
         }
@@ -914,9 +968,9 @@ function draw_skewt()
             };
 
             const y_sfc  = y(sfc_p_hpa_marker);
-            const handle = (cx) => chart.append("path")
-                .attr("d", "M0,-6L6,0L0,6L-6,0Z")
-                .attr("transform", `translate(${cx},${y_sfc})`)
+            const handle = (cx) => chart.append("circle")
+                .attr("cx", cx).attr("cy", y_sfc)
+                .attr("r", 5)
                 .attr("fill", "white")
                 .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
@@ -927,8 +981,8 @@ function draw_skewt()
 
             const reposition_markers = () =>
             {
-                T_node.attr("transform",  `translate(${x(skew_transform(T_marker_val(),  sfc_p_hpa_marker))},${y_sfc})`);
-                Td_node.attr("transform", `translate(${x(skew_transform(Td_marker_val(), sfc_p_hpa_marker))},${y_sfc})`);
+                T_node.attr("cx",  x(skew_transform(T_marker_val(),  sfc_p_hpa_marker)));
+                Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
             };
 
             const make_drag = (axis) => d3.drag()
@@ -987,9 +1041,8 @@ function draw_skewt()
         if (model_sounding && show_model && parcels.some(p => p.visible))
         {
             parcels.filter(p => p.visible).forEach(p =>
-                legend_items.push({ label: p.name, color: p.color, active: p.id === active_parcel_id }));
-            if (markers_drawn.cloud_base) legend_items.push({ label: "cloud base", marker: "open"   });
-            if (markers_drawn.plume_top)  legend_items.push({ label: "plume top",  marker: "filled" });
+                legend_items.push({ label: p.name, color: p.color, dashes: DASH_PARCEL,
+                                    active: p.id === active_parcel_id }));
         }
 
         const line_len = 22;
@@ -1000,20 +1053,13 @@ function draw_skewt()
         legend_items.forEach((item, i) =>
         {
             const y_off = i * row_h;
-            if (item.marker)
-                legend.append("circle")
-                    .attr("cx", line_len / 2).attr("cy", y_off + 6).attr("r", 4)
-                    .attr("fill", item.marker === "filled" ? "#666" : "white")
-                    .attr("stroke", "#666")
-                    .attr("stroke-width", 1.6);
-            else
-                legend.append("line")
-                    .attr("x1", 0).attr("x2", line_len)
-                    .attr("y1", y_off + 6).attr("y2", y_off + 6)
-                    .attr("stroke", item.color)
-                    .attr("stroke-width", LW_PROFILE)
-                    .attr("stroke-dasharray", item.dashes ?? null)
-                    .attr("stroke-opacity", item.active === false ? OP_PARCEL_IDLE : 1);
+            legend.append("line")
+                .attr("x1", 0).attr("x2", line_len)
+                .attr("y1", y_off + 6).attr("y2", y_off + 6)
+                .attr("stroke", item.color)
+                .attr("stroke-width", LW_PROFILE)
+                .attr("stroke-dasharray", item.dashes ?? null)
+                .attr("stroke-opacity", item.active === false ? OP_PARCEL_IDLE : 1);
             legend.append("text")
                 .attr("x", line_len + 6).attr("y", y_off + 10)
                 .attr("text-anchor", "start")
