@@ -675,8 +675,10 @@ function draw_skewt()
     if (document.getElementById("show_isobars").checked)
         draw_isobars(chart, y, W);
 
-    if (model_sounding && show_model && model_sounding.z)
-        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z, model_sounding.surface_pressure_hpa);
+    // Heights above ground level, to match the parcel levels and the plume model, which
+    // both measure from the surface rather than from sea level.
+    if (model_sounding && show_model && model_sounding.z_agl)
+        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z_agl, model_sounding.surface_pressure_hpa);
 
     if (bg_data)
     {
