@@ -135,20 +135,11 @@
             </div>
 
             <aside class="sidebar right">
-                <details class="section">
-                    <summary><span class="material-icons">switch_access_shortcut</span> Parcel control</summary>
+                <details class="section" open>
+                    <summary><span class="material-icons">switch_access_shortcut</span> Parcels</summary>
                     <div class="section-body">
-                        <label>
-                            Launch parcel
-                            <input type="checkbox" id="launch_parcel" disabled>
-                        </label>
-                        <label>
-                            Mode
-                            <select id="parcel_mode">
-                                <option value="non_entraining">Non-entraining</option>
-                                <option value="entraining">Entraining</option>
-                            </select>
-                        </label>
+                        <div id="parcel_list" class="parcel-list"></div>
+
                         <label>
                             <input type="checkbox" id="show_w_panel" disabled>
                             Vertical velocity panel
@@ -156,18 +147,28 @@
                         <span id="w_panel_note" class="sidebar-note" style="display:none">
                             Window too narrow for the vertical velocity panel.
                         </span>
-                        <label>
-                            <span id="fire_area_label">Fire area: 1.0 km²</span>
-                            <input type="range" id="fire_area" min="3" max="7" step="0.1" value="6">
-                        </label>
-                        <label>
-                            <span id="fire_H_label">Sensible heat flux: 0 kW/m²</span>
-                            <input type="range" id="fire_H" min="0" max="250" step="0.5" value="0">
-                        </label>
-                        <label>
-                            <span id="fire_LE_label">Latent heat flux: 0 kW/m²</span>
-                            <input type="range" id="fire_LE" min="0" max="50" step="0.5" value="0">
-                        </label>
+
+                        <div id="parcel_editor" class="section-body" style="display:none; padding: 0;">
+                            <label>
+                                Mode
+                                <select id="parcel_mode">
+                                    <option value="non_entraining">Non-entraining</option>
+                                    <option value="entraining">Entraining</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span id="fire_area_label">Fire area: 1.0 km²</span>
+                                <input type="range" id="fire_area" min="3" max="7" step="0.1" value="6">
+                            </label>
+                            <label>
+                                <span id="fire_H_label">Sensible heat flux: 0 kW/m²</span>
+                                <input type="range" id="fire_H" min="0" max="250" step="0.5" value="0">
+                            </label>
+                            <label>
+                                <span id="fire_LE_label">Latent heat flux: 0 kW/m²</span>
+                                <input type="range" id="fire_LE" min="0" max="50" step="0.5" value="0">
+                            </label>
+                        </div>
                     </div>
                 </details>
 
@@ -245,6 +246,10 @@
                         <label>
                             <input type="checkbox" id="show_moist_adiabats" checked>
                             Moist adiabats <span style="color:#0D9146"><b>&mdash;&mdash;&mdash;</b></span>
+                        </label>
+                        <label>
+                            <span id="bg_line_opacity_label">Line opacity: 50%</span>
+                            <input type="range" id="bg_line_opacity" min="0" max="1" step="0.05" value="0.5">
                         </label>
                         <label>
                             x-axis

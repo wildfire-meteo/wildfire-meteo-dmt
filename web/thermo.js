@@ -112,38 +112,3 @@ export function sat_adjust(thetal, qt, p)
     const ql = Math.max(0.0, qt - qs);
     return { T: tnr, ql, qi: 0.0, qs };
 }
-
-
-export function dTdp(T, p)
-{
-    const qs = qsat(T, p);
-    return (T / p) * (Rd + Lv * qs / T)
-                   / (cp + Lv**2 * qs / (Rv * T**2));
-}
-
-
-export function calc_moist_adiabat(T_start, p)
-{
-    const cA = [0, -5/9, -153/128];
-    const cB = [1/3, 15/16, 8/15];
-
-    const T_out = new Array(p.length);
-    T_out[0] = T_start;
-
-    for (let k = 1; k < p.length; k++)
-    {
-        const dp = p[k] - p[k-1];
-        let T  = T_out[k-1];
-        let Tt = 0;
-
-        for (let s = 0; s < 3; s++)
-        {
-            Tt = cA[s] * Tt + dTdp(T, p[k-1]);
-            T  = T + cB[s] * dp * Tt;
-        }
-
-        T_out[k] = T;
-    }
-
-    return T_out;
-}
