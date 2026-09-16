@@ -70,7 +70,7 @@ export function find_lcl(T_sfc, Td_sfc, p_sfc, tol=5)
 
 
 export function calc_parcel_ascent(
-    z_env, T_env, Td_env, p_env,
+    z_env, T_env, Td_env, p_env, u_env, v_env,
     dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s,
     {
         fire_multiplier = 1,
@@ -91,6 +91,7 @@ export function calc_parcel_ascent(
             theta: [], thetav: [], qt: [],
             area: [], w: [], buoy: [], mass_flux: [],
             entrainment: [], detrainment: [], type: [],
+            u: [], v: [], x: [], y: [],
             z: [], p: [],
             k_top: -1, k_lcl: -1, stopped: false,
         };
@@ -103,6 +104,8 @@ export function calc_parcel_ascent(
     const T_e      = interp(z, z_env, T_env);
     const Td_e     = interp(z, z_env, Td_env);
     const p_e      = interp(z, z_env, p_env);
+    const u_e      = interp(z, z_env, u_env);
+    const v_e      = interp(z, z_env, v_env);
 
     const exner_e  = p_e.map(p => exner(p));
     const theta_e  = T_e.map((T, k) => T / exner_e[k]);
@@ -123,6 +126,10 @@ export function calc_parcel_ascent(
     const det_p    = new Array(n);
     const type_p   = new Array(n).fill(0);
     const buoy_p   = new Array(n);
+    const u_p      = new Array(n);
+    const v_p      = new Array(n);
+    const x_p      = new Array(n);
+    const y_p      = new Array(n);
 
     // Initial conditions. Fire perturbation is a dry heat excess (ql=0 at source),
     // so thetal_p == theta_p at the surface.
@@ -137,6 +144,12 @@ export function calc_parcel_ascent(
     area_p[0]   = area_plume_s;
     w_p[0]      = w0_plume_s;
     mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
+
+    // Assume plume starts with environmental momentum at H0
+    u_p[0] = interp([H0_PLUME], z_env, u_env)[0];
+    v_p[0] = interp([H0_PLUME], z_env, v_env)[0];
+    x_p[0] = 0;
+    y_p[0] = 0;
 
     // Entrainment settings (Morton formulation).
     const epsi = fac_ent / Math.sqrt(area_plume_s);
@@ -158,6 +171,14 @@ export function calc_parcel_ascent(
         // is saturated, entrained air carries condensate and theta_e > thetal_e.
         thetal_p[i] = thetal_p[i-1] - ent_p[i-1] * (thetal_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
         qt_p[i]     = qt_p[i-1]     - ent_p[i-1] * (qt_p[i-1]     - qt_e[i-1])    / mf_p[i-1] * dz;
+
+        // Horizontal momentum, frozen with w_p once the plume has stopped.
+        const alive = k_top === -1;
+        u_p[i] = alive ? u_p[i-1] - ent_p[i-1] * (u_p[i-1] - u_e[i-1]) / mf_p[i-1] * dz : u_p[i-1];
+        v_p[i] = alive ? v_p[i-1] - ent_p[i-1] * (v_p[i-1] - v_e[i-1]) / mf_p[i-1] * dz : v_p[i-1];
+
+        x_p[i] = alive ? x_p[i-1] + u_p[i-1] / w_p[i-1] * dz : x_p[i-1];
+        y_p[i] = alive ? y_p[i-1] + v_p[i-1] / w_p[i-1] * dz : y_p[i-1];
 
         ({ T, ql, qi } = sat_adjust(thetal_p[i], qt_p[i], p_e[i]));
 
@@ -214,6 +235,10 @@ export function calc_parcel_ascent(
         area:        sl(area_p),
         w:           sl(w_p),
         buoy:        sl(buoy_p),
+        u:           sl(u_p),
+        v:           sl(v_p),
+        x:           sl(x_p),
+        y:           sl(y_p),
         mass_flux:   sl(mf_p),
         entrainment: sl(ent_p),
         detrainment: sl(det_p),
