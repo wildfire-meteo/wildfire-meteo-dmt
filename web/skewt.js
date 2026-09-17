@@ -41,6 +41,9 @@ let model_forecast = null;
 let current_time = 0;
 
 let parcels = [];
+
+// Slider value from before the strip capped the diagram top, restored when it closes.
+let p_top_saved = null;
 let active_parcel_id = null;
 
 function active_parcel()
@@ -79,6 +82,25 @@ const MIN_MAIN_W    = 320;
 
 // Coarse ladder for the w axis, so the domain stays stable while sliders are dragged.
 const W_AXIS_LADDER = [10, 20, 30, 50, 100, 150, 200];
+
+// Plume cross-section strip above the diagram, at a fixed true-aspect scale; big plumes run off it.
+const PLAN_H      = 170;
+const PLAN_Z_TOP  = 3000;  // m AGL at the top of the strip
+const PLAN_X0     = 0.12;  // fire position, as a fraction of the width
+const PLAN_GAP    = 46;    // the strip's own x axis, plus room for the diagram title
+const PLAN_P_TOP  = 200;   // hPa the diagram is capped at while the strip is open
+const MIN_MAIN_H  = 280;
+
+// Top-view inset in the strip's corner, at its own fixed scale.
+const INSET_PAD   = 6;
+const INSET_SIZE  = PLAN_H - 2 * INSET_PAD;
+const INSET_R     = 5000;   // m from the fire to the inset edge
+const FIRE_ICON   = 14;     // px
+
+// Plume fills: saturated part in the isohume blue.
+const CLOUD_COLOR   = "rgb(31,119,180)";
+const CLOUD_FILL_OP = 0.22;
+const PLUME_FILL_OP = 0.18;
 
 // Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
 // the observed T/Td profile before interpolating onto the model's pressure
@@ -291,7 +313,7 @@ function render_parcel_list()
         list.appendChild(add);
     }
 
-    sync_w_panel_control();
+    sync_panel_controls();
 }
 
 function row_icon(glyph, title, on_click)
@@ -380,9 +402,10 @@ function load_parcel_into_editor()
     sync_flux_controls();
 }
 
-function sync_w_panel_control()
+function sync_panel_controls()
 {
-    document.getElementById("show_w_panel").disabled = parcels.length === 0;
+    document.getElementById("show_w_panel").disabled    = parcels.length === 0;
+    document.getElementById("show_plan_panel").disabled = parcels.length === 0;
 }
 
 document.getElementById("parcel_mode").addEventListener("change", (e) =>
@@ -391,8 +414,10 @@ document.getElementById("parcel_mode").addEventListener("change", (e) =>
     if (p) p.mode = e.target.value;
     draw_skewt();
 });
-// Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
+// Toggling a panel changes the plot size, so reset the pixel-space zoom (this redraws).
 document.getElementById("show_w_panel").addEventListener("change", () =>
+    zoom.transform(svg, d3.zoomIdentity));
+document.getElementById("show_plan_panel").addEventListener("change", () =>
     zoom.transform(svg, d3.zoomIdentity));
 document.getElementById("fire_area").addEventListener("input", (e) =>
 {
@@ -583,8 +608,9 @@ function draw_w_panel(panel, y, H, entries)
     const active = entries.find(e => e.is_active);
     if (active)
     {
+        const rules = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
         const level_rule = (p_hpa) =>
-            dyn.append("line")
+            rules.append("line")
                 .attr("x1", 0).attr("y1", y(p_hpa))
                 .attr("x2", W_PANEL_W).attr("y2", y(p_hpa))
                 .attr("stroke", active.parcel.color)
@@ -660,6 +686,248 @@ function get_surface_base()
     return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
 }
 
+// Material Icons flame, centred on x with its base at y.
+function draw_fire_icon(parent, x, y)
+{
+    parent.append("text")
+        .attr("x", x).attr("y", y)
+        .attr("text-anchor", "middle")
+        .style("font-family", "Material Icons").style("font-size", `${FIRE_ICON}px`)
+        .attr("fill", "#333")
+        .attr("stroke", "white").attr("stroke-width", 2.5)
+        .style("paint-order", "stroke fill")
+        .text("local_fire_department");
+}
+
+// North-up top view centred on the fire: plume footprints and tracks over the whole
+// ascent, and the section line A-A' over the strip's s range.
+function draw_plan_inset(parent, live, ix, iy, s_range, hx, hy)
+{
+    const inset = parent.append("g").attr("transform", `translate(${ix},${iy})`);
+
+    inset.append("rect")
+        .attr("width", INSET_SIZE).attr("height", INSET_SIZE)
+        .attr("fill", "white").attr("stroke", "#ccc");
+    inset.append("clipPath").attr("id", "plan-inset-clip")
+        .append("rect").attr("width", INSET_SIZE).attr("height", INSET_SIZE);
+
+    const c  = INSET_SIZE / 2;
+    const m  = (c - 4) / INSET_R;                        // pixels per metre
+    const px = (east, north) => [c + east * m, c - north * m];
+
+    const body = inset.append("g").attr("clip-path", "url(#plan-inset-clip)");
+
+    // Footprints as unions of per-level discs: each fill is one group at one opacity so
+    // overlaps do not darken, and a mask of outer minus inner discs gives the outline.
+    live.forEach(({ parcel, result, is_active }) =>
+    {
+        const K     = result.k_top;
+        const kl    = result.k_lcl > 0 ? result.k_lcl : K + 1;
+        const discs = d3.range(K + 1).map(k =>
+        {
+            const a = result.area[k];
+            return { at: px(result.x[k], result.y[k]), r: isFinite(a) && a > 0 ? Math.sqrt(a / Math.PI) * m : 0 };
+        });
+
+        // Discs plus the band between consecutive ones: at coarse dz, or where the plume
+        // narrows as it stalls, the discs alone are disjoint and read as a string of beads.
+        const shapes = (g, k0, k1, color, dr) =>
+        {
+            for (let k = k0; k <= k1; k++)
+                g.append("circle")
+                    .attr("cx", discs[k].at[0]).attr("cy", discs[k].at[1]).attr("r", discs[k].r + dr)
+                    .attr("fill", color);
+
+            for (let k = k0; k < k1; k++)
+            {
+                const [ax, ay] = discs[k].at, [bx, by] = discs[k+1].at;
+                const len = Math.hypot(bx - ax, by - ay);
+                if (len < 1e-9) continue;
+                const [nx, ny] = [-(by - ay) / len, (bx - ax) / len];
+                const ra = discs[k].r + dr, rb = discs[k+1].r + dr;
+                g.append("polygon")
+                    .attr("points", `${ax + ra*nx},${ay + ra*ny} ${bx + rb*nx},${by + rb*ny} ` +
+                                    `${bx - rb*nx},${by - rb*ny} ${ax - ra*nx},${ay - ra*ny}`)
+                    .attr("fill", color);
+            }
+        };
+
+        const fill = (k0, k1, color, op) =>
+            shapes(body.append("g").attr("opacity", op), k0, k1, color, 0);
+
+        fill(0, Math.max(0, kl - 1), parcel.color, PLUME_FILL_OP);
+        if (kl <= K) fill(Math.max(0, kl - 1), K, CLOUD_COLOR, CLOUD_FILL_OP);
+
+        const lw   = is_active ? 1.2 : 0.8;
+        const mask = body.append("mask").attr("id", `plan-inset-mask-${parcel.id}`);
+        shapes(mask, 0, K, "white", lw);
+        shapes(mask, 0, K, "black", 0);
+
+        body.append("rect")
+            .attr("width", INSET_SIZE).attr("height", INSET_SIZE)
+            .attr("fill", parcel.color).attr("opacity", 0.6)
+            .attr("mask", `url(#plan-inset-mask-${parcel.id})`);
+
+        // Centreline track.
+        body.append("path")
+            .attr("d", d3.line()(d3.range(K + 1).map(k => px(result.x[k], result.y[k]))))
+            .attr("fill", "none")
+            .attr("stroke", parcel.color)
+            .attr("stroke-width", is_active ? 1.5 : 1);
+    });
+
+    // Section line, kept inside the box so both end labels stay visible.
+    const edge = (c - 12) / Math.max(Math.abs(hx), Math.abs(hy)) / m;
+    const s_lo = Math.max(s_range[0], -edge);
+    const s_hi = Math.min(s_range[1],  edge);
+    const [x1, y1] = px(s_lo * hx, s_lo * hy);
+    const [x2, y2] = px(s_hi * hx, s_hi * hy);
+
+    const [bx, by] = px((s_hi - 7 / m) * hx, (s_hi - 7 / m) * hy);
+
+    inset.append("line")
+        .attr("x1", x1).attr("y1", y1).attr("x2", bx).attr("y2", by)
+        .attr("stroke", "#333").attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+    inset.append("polygon")
+        .attr("points", `${x2},${y2} ${bx + 3.5 * hy},${by + 3.5 * hx} ${bx - 3.5 * hy},${by - 3.5 * hx}`)
+        .attr("fill", "#333");
+
+    [[x1, y1, "A"], [x2, y2, "A′"]].forEach(([x, y, label]) =>
+        inset.append("text")
+            .attr("x", x + 9 * hy).attr("y", y + 9 * hx + 4)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "11px").attr("font-weight", 600).attr("fill", "#333")
+            .attr("stroke", "white").attr("stroke-width", 3)
+            .style("paint-order", "stroke fill")
+            .text(label));
+
+    draw_fire_icon(inset, c, c + FIRE_ICON / 2);
+
+    inset.append("text")
+        .attr("x", 5).attr("y", 12)
+        .attr("font-size", "10px").attr("fill", "#666")
+        .text("N ↑");
+
+    inset.append("text")
+        .attr("x", INSET_SIZE - 5).attr("y", INSET_SIZE - 5)
+        .attr("text-anchor", "end")
+        .attr("font-size", "10px").attr("fill", "#666")
+        .text(`↔ ${2 * INSET_R / 1000} km`);
+}
+
+// Plume silhouette in the vertical plane along s, the mean drift direction.
+function draw_plan_panel(panel, W_plan, entries)
+{
+    const dyn = panel.append("g").attr("class", "plan-panel-dyn");
+
+    dyn.append("rect")
+        .attr("width", W_plan).attr("height", PLAN_H)
+        .attr("fill", "white").attr("stroke", "#ccc");
+    dyn.append("clipPath").attr("id", "plan-panel-clip")
+        .append("rect").attr("width", W_plan).attr("height", PLAN_H);
+
+    const scale = PLAN_H / PLAN_Z_TOP;                       // pixels per metre
+    const x0    = PLAN_X0 * W_plan;                          // pixel of s = 0
+    const xs    = d3.scaleLinear().domain([-x0 / scale, (W_plan - x0) / scale]).range([0, W_plan]);
+    const yz    = d3.scaleLinear().domain([0, PLAN_Z_TOP]).range([PLAN_H, 0]);
+
+    const live = entries.filter(e => e.result.k_top > 0);
+
+    // s from the depth-averaged wind of the parcel under edit, shared by all parcels.
+    const ref = live.find(e => e.is_active) ?? live[0];
+    const su  = ref ? ref.result.u.slice(0, ref.result.k_top + 1).reduce((a, b) => a + b, 0) : 0;
+    const sv  = ref ? ref.result.v.slice(0, ref.result.k_top + 1).reduce((a, b) => a + b, 0) : 0;
+    const mag = Math.hypot(su, sv);
+    const hx  = mag > 1e-6 ? su / mag : 0;
+    const hy  = mag > 1e-6 ? sv / mag : 1;
+
+    const clip = dyn.append("g").attr("clip-path", "url(#plan-panel-clip)");
+
+    live.forEach(({ parcel, result, is_active }) =>
+    {
+        const K = result.k_top;
+
+        // Up one edge and back down the other, split at cloud base.
+        const envelope = (k0, k1, fill, fill_op) =>
+        {
+            const pts = [];
+            const edge = (k, sign) =>
+            {
+                const a = result.area[k];
+                const r = isFinite(a) && a > 0 ? Math.sqrt(a / Math.PI) : 0;
+                return [xs(result.x[k] * hx + result.y[k] * hy + sign * r), yz(result.z[k])];
+            };
+
+            for (let k = k0; k <= k1; k++) pts.push(edge(k,  1));
+            for (let k = k1; k >= k0; k--) pts.push(edge(k, -1));
+
+            clip.append("polygon")
+                .attr("points", pts.map(q => `${q[0]},${q[1]}`).join(" "))
+                .attr("fill", fill)
+                .attr("fill-opacity", fill_op)
+                .attr("stroke", parcel.color)
+                .attr("stroke-width", is_active ? 1.2 : 0.8)
+                .attr("stroke-opacity", 0.6);
+        };
+
+        const kl = result.k_lcl;
+        if (kl > 0 && kl < K)
+        {
+            envelope(0,  kl, parcel.color, PLUME_FILL_OP);
+            envelope(kl, K,  CLOUD_COLOR,  CLOUD_FILL_OP);
+        }
+        else
+        {
+            envelope(0, K, parcel.color, PLUME_FILL_OP);
+        }
+    });
+
+    if (live.length === 0)
+        dyn.append("text")
+            .attr("x", W_plan / 2).attr("y", PLAN_H / 2)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "11px").attr("fill", "#888")
+            .text("Raise the sensible heat flux to launch a plume");
+
+    // Ground and fire.
+    dyn.append("line")
+        .attr("x1", 0).attr("y1", PLAN_H)
+        .attr("x2", W_plan).attr("y2", PLAN_H)
+        .attr("stroke", "#666").attr("stroke-width", 1.5);
+
+    draw_fire_icon(dyn, x0, PLAN_H);
+
+    // A and A' mark the ends of the section, as on the inset's section line.
+    if (live.length > 0)
+    {
+        [[0, "start", "A"], [W_plan, "end", "A\u2032"]].forEach(([x, anchor, label]) =>
+            dyn.append("text")
+                .attr("x", x).attr("y", -6)
+                .attr("text-anchor", anchor)
+                .attr("font-size", "12px").attr("font-weight", 600).attr("fill", "#333")
+                .text(label));
+
+        draw_plan_inset(dyn, live, W_plan - INSET_SIZE - INSET_PAD, INSET_PAD,
+                        [-x0 / scale, (W_plan - x0) / scale], hx, hy);
+    }
+
+    dyn.append("g")
+        .attr("transform", `translate(0,${PLAN_H})`)
+        .call(d3.axisBottom(xs).ticks(8).tickFormat(d => d / 1000))
+        .selectAll("text").style("font-size", font_size);
+
+    dyn.append("g")
+        .call(d3.axisLeft(yz).ticks(4).tickFormat(d => d / 1000))
+        .selectAll("text").style("font-size", font_size);
+
+    dyn.append("text")
+        .attr("x", W_plan).attr("y", PLAN_H + 34)
+        .attr("text-anchor", "end")
+        .style("font-size", font_size).attr("fill", "#666")
+        .text("km");
+}
+
+
 function draw_skewt()
 {
     svg.selectAll("*").remove();
@@ -687,16 +955,49 @@ function draw_skewt()
         - (toolbarEl ? toolbarEl.offsetHeight : 0)
         - vPad;
     svg.attr("height", svgH);
-    const H = svgH - margin.top - margin.bottom;
+
+    const plan_panel_el     = document.getElementById("show_plan_panel");
+    const plan_panel_wanted = plan_panel_el.checked && !plan_panel_el.disabled && model_sounding && show_model;
+    const h_avail = svgH - margin.top - margin.bottom;
+
+    const plan_panel_on   = plan_panel_wanted && h_avail - PLAN_H - PLAN_GAP >= MIN_MAIN_H;
+    const plan_panel_used = plan_panel_on ? PLAN_H + PLAN_GAP : 0;
+
+    document.getElementById("plan_panel_note").style.display =
+        plan_panel_wanted && !plan_panel_on ? "" : "none";
+
+    // The strip takes its height from the diagram, so cap how high the diagram reaches
+    // while it is open: the levels given up are above any plume this tool is about.
+    const p_top_el = document.getElementById("p_top");
+
+    // Read before touching min: raising a range input's min clamps its value on the spot.
+    if (plan_panel_on && p_top_saved === null && +p_top_el.value < PLAN_P_TOP)
+        p_top_saved = p_top_el.value;
+
+    p_top_el.min = plan_panel_on ? PLAN_P_TOP : 100;
+
+    if (!plan_panel_on && p_top_saved !== null)
+    {
+        p_top_el.value = p_top_saved;
+        p_top_saved = null;
+    }
+    document.getElementById("p_top_label").textContent = `Top: ${p_top_el.value} hPa`;
+
+    const H = h_avail - plan_panel_used;
 
     if (W <= 0 || H <= 0) return;
 
     const x_mode = document.getElementById("x_axis_mode").value;
     const x = current_zoom.rescaleX(d3.scaleLinear().domain(x_limits[x_mode]).range([0, W]));
-    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, +document.getElementById("p_top").value]).range([H, 0]));
+    const p_top = +p_top_el.value;
+    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, p_top]).range([H, 0]));
+
+    const plan_panel = plan_panel_on
+        ? svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`)
+        : null;
 
     const g = svg.append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
+        .attr("transform", `translate(${margin.left},${margin.top + plan_panel_used})`);
 
     g.append("rect")
         .attr("width", W).attr("height", H)
@@ -782,7 +1083,7 @@ function draw_skewt()
             .attr("stroke-width", 1.5)
             .attr("stroke-dasharray", "4,3");
         chart.append("text")
-            .attr("x", W - 4 - STAFF_LEN * Math.min(1, H / 600))
+            .attr("x", W - 4 - STAFF_LEN * Math.min(1, h_avail / 600))
             .attr("y", y(sfc_p_hpa) - 3)
             .attr("text-anchor", "end")
             .attr("font-size", "11px")
@@ -809,6 +1110,13 @@ function draw_skewt()
             const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
             const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
 
+            // Wind components (wd is where the wind blows from); no 10 m wind yet, so repeat the lowest level.
+            const has_wind = !!model_sounding.ws;
+            const u_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.sin(model_sounding.wd[i] * Math.PI / 180)) : null;
+            const v_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.cos(model_sounding.wd[i] * Math.PI / 180)) : null;
+            const u_env = has_wind ? [u_lev[idx_above], ...u_lev.slice(idx_above)] : z_env.map(() => 0);
+            const v_env = has_wind ? [v_lev[idx_above], ...v_lev.slice(idx_above)] : z_env.map(() => 0);
+
             // "Non-entraining" is the entraining plume with entrainment switched off: the
             // parcel then just conserves its initial thetal/qt with height (classic parcel
             // theory) while still accelerating under buoyancy alone. It needs a nominal
@@ -822,7 +1130,7 @@ function draw_skewt()
             const w0          = classic ? Math.max(surf.w0, w0_eps) : surf.w0;
 
             return calc_parcel_ascent(
-                z_env, T_env, Td_env, p_env,
+                z_env, T_env, Td_env, p_env, u_env, v_env,
                 surf.dtheta, surf.dq, w0, 10 ** parcel.fire_area,
                 { fac_ent, z_max: z_env[z_env.length - 1], full_ascent: classic },
             );
@@ -832,6 +1140,7 @@ function draw_skewt()
         {
             chart.selectAll(".parcel-path").remove();
             if (w_panel) w_panel.selectAll(".w-panel-dyn").remove();
+            if (plan_panel) plan_panel.selectAll(".plan-panel-dyn").remove();
 
             const parcel_line = d3.line()
                 .x(d => x(skew_transform(d[0], d[1])))
@@ -871,7 +1180,7 @@ function draw_skewt()
 
             const draw_level_labels = () =>
             {
-                const label_x = W - 4 - STAFF_LEN * Math.min(1, H / 600);
+                const label_x = W - 4 - STAFF_LEN * Math.min(1, h_avail / 600);
                 const row     = 13;
 
                 // Spread from the top down, then lift the whole stack clear of the surface
@@ -928,6 +1237,7 @@ function draw_skewt()
             draw_level_labels();
 
             if (w_panel) draw_w_panel(w_panel, y, H, drawn);
+            if (plan_panel) draw_plan_panel(plan_panel, w_avail, drawn);
         }
 
         function get_surface_state(parcel)
@@ -1111,14 +1421,20 @@ function draw_skewt()
     if (model_sounding && show_model && model_sounding.ws)
     {
         const ms_to_kts   = 1.94384;
-        const barb_scale  = Math.min(1, H / 600);
+        const barb_scale  = Math.min(1, h_avail / 600);
         const barb_sfc_p  = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
+
+        // Barbs sit outside the plot clip, but must not pan up over the strip.
+        g.append("clipPath").attr("id", "barb-clip")
+            .append("rect").attr("width", W + margin.right).attr("height", H + margin.bottom);
+        const barbs = g.append("g").attr("clip-path", "url(#barb-clip)");
+
         model_sounding.p_hpa.forEach((p, i) =>
         {
             if (p > barb_sfc_p) return;  // below surface, skip
             // In the 900–1000 hPa band keep only the 50 hPa grid (1000, 950, 900).
             if (p > 900 && p % 50 !== 0) return;
-            draw_wind_barb(g, W, y(p),
+            draw_wind_barb(barbs, W, y(p),
                 model_sounding.ws[i] * ms_to_kts,
                 model_sounding.wd[i],
                 "black",
@@ -1126,9 +1442,15 @@ function draw_skewt()
         });
     }
 
-    g.append("g").call(d3.axisLeft(y)
-        .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100])
-        .tickFormat(d => d))
+    // Likewise for the pressure ticks.
+    g.append("clipPath").attr("id", "y-axis-clip")
+        .append("rect").attr("x", -margin.left).attr("y", -8)
+        .attr("width", margin.left).attr("height", H + margin.bottom + 8);
+
+    g.append("g").attr("clip-path", "url(#y-axis-clip)")
+        .call(d3.axisLeft(y)
+            .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100].filter(v => v >= p_top))
+            .tickFormat(d => d))
         .selectAll("text").style("font-size", font_size);
 
     g.append("g")
