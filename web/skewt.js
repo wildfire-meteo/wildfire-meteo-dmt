@@ -41,6 +41,9 @@ let model_forecast = null;
 let current_time = 0;
 
 let parcels = [];
+
+// Slider value from before the strip capped the diagram top, restored when it closes.
+let p_top_saved = null;
 let active_parcel_id = null;
 
 function active_parcel()
@@ -85,6 +88,7 @@ const PLAN_H      = 170;
 const PLAN_Z_TOP  = 3000;  // m AGL at the top of the strip
 const PLAN_X0     = 0.12;  // fire position, as a fraction of the width
 const PLAN_GAP    = 46;    // the strip's own x axis, plus room for the diagram title
+const PLAN_P_TOP  = 200;   // hPa the diagram is capped at while the strip is open
 const MIN_MAIN_H  = 280;
 
 // Top-view inset in the strip's corner, at its own fixed scale.
@@ -962,13 +966,31 @@ function draw_skewt()
     document.getElementById("plan_panel_note").style.display =
         plan_panel_wanted && !plan_panel_on ? "" : "none";
 
+    // The strip takes its height from the diagram, so cap how high the diagram reaches
+    // while it is open: the levels given up are above any plume this tool is about.
+    const p_top_el = document.getElementById("p_top");
+
+    // Read before touching min: raising a range input's min clamps its value on the spot.
+    if (plan_panel_on && p_top_saved === null && +p_top_el.value < PLAN_P_TOP)
+        p_top_saved = p_top_el.value;
+
+    p_top_el.min = plan_panel_on ? PLAN_P_TOP : 100;
+
+    if (!plan_panel_on && p_top_saved !== null)
+    {
+        p_top_el.value = p_top_saved;
+        p_top_saved = null;
+    }
+    document.getElementById("p_top_label").textContent = `Top: ${p_top_el.value} hPa`;
+
     const H = h_avail - plan_panel_used;
 
     if (W <= 0 || H <= 0) return;
 
     const x_mode = document.getElementById("x_axis_mode").value;
     const x = current_zoom.rescaleX(d3.scaleLinear().domain(x_limits[x_mode]).range([0, W]));
-    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, +document.getElementById("p_top").value]).range([H, 0]));
+    const p_top = +p_top_el.value;
+    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, p_top]).range([H, 0]));
 
     const plan_panel = plan_panel_on
         ? svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`)
@@ -1427,7 +1449,7 @@ function draw_skewt()
 
     g.append("g").attr("clip-path", "url(#y-axis-clip)")
         .call(d3.axisLeft(y)
-            .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100])
+            .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100].filter(v => v >= p_top))
             .tickFormat(d => d))
         .selectAll("text").style("font-size", font_size);
 
