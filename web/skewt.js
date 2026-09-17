@@ -87,8 +87,15 @@ const PLAN_X0     = 0.12;  // fire position, as a fraction of the width
 const PLAN_GAP    = 46;    // the strip's own x axis, plus room for the diagram title
 const MIN_MAIN_H  = 280;
 
+// Top-view inset in the strip's corner, at its own fixed scale.
+const INSET_PAD   = 6;
+const INSET_SIZE  = PLAN_H - 2 * INSET_PAD;
+const INSET_R     = 5000;   // m from the fire to the inset edge
+const FIRE_ICON   = 14;     // px
+
 // Plume fills: saturated part in the isohume blue.
-const CLOUD_FILL    = "rgba(31,119,180,0.22)";
+const CLOUD_COLOR   = "rgb(31,119,180)";
+const CLOUD_FILL_OP = 0.22;
 const PLUME_FILL_OP = 0.18;
 
 // Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
@@ -675,6 +682,135 @@ function get_surface_base()
     return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
 }
 
+// Material Icons flame, centred on x with its base at y.
+function draw_fire_icon(parent, x, y)
+{
+    parent.append("text")
+        .attr("x", x).attr("y", y)
+        .attr("text-anchor", "middle")
+        .style("font-family", "Material Icons").style("font-size", `${FIRE_ICON}px`)
+        .attr("fill", "#333")
+        .attr("stroke", "white").attr("stroke-width", 2.5)
+        .style("paint-order", "stroke fill")
+        .text("local_fire_department");
+}
+
+// North-up top view centred on the fire: plume footprints and tracks over the whole
+// ascent, and the section line A-A' over the strip's s range.
+function draw_plan_inset(parent, live, ix, iy, s_range, hx, hy)
+{
+    const inset = parent.append("g").attr("transform", `translate(${ix},${iy})`);
+
+    inset.append("rect")
+        .attr("width", INSET_SIZE).attr("height", INSET_SIZE)
+        .attr("fill", "white").attr("stroke", "#ccc");
+    inset.append("clipPath").attr("id", "plan-inset-clip")
+        .append("rect").attr("width", INSET_SIZE).attr("height", INSET_SIZE);
+
+    const c  = INSET_SIZE / 2;
+    const m  = (c - 4) / INSET_R;                        // pixels per metre
+    const px = (east, north) => [c + east * m, c - north * m];
+
+    const body = inset.append("g").attr("clip-path", "url(#plan-inset-clip)");
+
+    // Footprints as unions of per-level discs: each fill is one group at one opacity so
+    // overlaps do not darken, and a mask of outer minus inner discs gives the outline.
+    live.forEach(({ parcel, result, is_active }) =>
+    {
+        const K     = result.k_top;
+        const kl    = result.k_lcl > 0 ? result.k_lcl : K + 1;
+        const discs = d3.range(K + 1).map(k =>
+        {
+            const a = result.area[k];
+            return { at: px(result.x[k], result.y[k]), r: isFinite(a) && a > 0 ? Math.sqrt(a / Math.PI) * m : 0 };
+        });
+
+        // Discs plus the band between consecutive ones: at coarse dz, or where the plume
+        // narrows as it stalls, the discs alone are disjoint and read as a string of beads.
+        const shapes = (g, k0, k1, color, dr) =>
+        {
+            for (let k = k0; k <= k1; k++)
+                g.append("circle")
+                    .attr("cx", discs[k].at[0]).attr("cy", discs[k].at[1]).attr("r", discs[k].r + dr)
+                    .attr("fill", color);
+
+            for (let k = k0; k < k1; k++)
+            {
+                const [ax, ay] = discs[k].at, [bx, by] = discs[k+1].at;
+                const len = Math.hypot(bx - ax, by - ay);
+                if (len < 1e-9) continue;
+                const [nx, ny] = [-(by - ay) / len, (bx - ax) / len];
+                const ra = discs[k].r + dr, rb = discs[k+1].r + dr;
+                g.append("polygon")
+                    .attr("points", `${ax + ra*nx},${ay + ra*ny} ${bx + rb*nx},${by + rb*ny} ` +
+                                    `${bx - rb*nx},${by - rb*ny} ${ax - ra*nx},${ay - ra*ny}`)
+                    .attr("fill", color);
+            }
+        };
+
+        const fill = (k0, k1, color, op) =>
+            shapes(body.append("g").attr("opacity", op), k0, k1, color, 0);
+
+        fill(0, Math.max(0, kl - 1), parcel.color, PLUME_FILL_OP);
+        if (kl <= K) fill(Math.max(0, kl - 1), K, CLOUD_COLOR, CLOUD_FILL_OP);
+
+        const lw   = is_active ? 1.2 : 0.8;
+        const mask = body.append("mask").attr("id", `plan-inset-mask-${parcel.id}`);
+        shapes(mask, 0, K, "white", lw);
+        shapes(mask, 0, K, "black", 0);
+
+        body.append("rect")
+            .attr("width", INSET_SIZE).attr("height", INSET_SIZE)
+            .attr("fill", parcel.color).attr("opacity", 0.6)
+            .attr("mask", `url(#plan-inset-mask-${parcel.id})`);
+
+        // Centreline track.
+        body.append("path")
+            .attr("d", d3.line()(d3.range(K + 1).map(k => px(result.x[k], result.y[k]))))
+            .attr("fill", "none")
+            .attr("stroke", parcel.color)
+            .attr("stroke-width", is_active ? 1.5 : 1);
+    });
+
+    // Section line, kept inside the box so both end labels stay visible.
+    const edge = (c - 12) / Math.max(Math.abs(hx), Math.abs(hy)) / m;
+    const s_lo = Math.max(s_range[0], -edge);
+    const s_hi = Math.min(s_range[1],  edge);
+    const [x1, y1] = px(s_lo * hx, s_lo * hy);
+    const [x2, y2] = px(s_hi * hx, s_hi * hy);
+
+    const [bx, by] = px((s_hi - 7 / m) * hx, (s_hi - 7 / m) * hy);
+
+    inset.append("line")
+        .attr("x1", x1).attr("y1", y1).attr("x2", bx).attr("y2", by)
+        .attr("stroke", "#333").attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+    inset.append("polygon")
+        .attr("points", `${x2},${y2} ${bx + 3.5 * hy},${by + 3.5 * hx} ${bx - 3.5 * hy},${by - 3.5 * hx}`)
+        .attr("fill", "#333");
+
+    [[x1, y1, "A"], [x2, y2, "A′"]].forEach(([x, y, label]) =>
+        inset.append("text")
+            .attr("x", x + 9 * hy).attr("y", y + 9 * hx + 4)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "11px").attr("font-weight", 600).attr("fill", "#333")
+            .attr("stroke", "white").attr("stroke-width", 3)
+            .style("paint-order", "stroke fill")
+            .text(label));
+
+    draw_fire_icon(inset, c, c + FIRE_ICON / 2);
+
+    inset.append("text")
+        .attr("x", 5).attr("y", 12)
+        .attr("font-size", "10px").attr("fill", "#666")
+        .text("N ↑");
+
+    inset.append("text")
+        .attr("x", INSET_SIZE - 5).attr("y", INSET_SIZE - 5)
+        .attr("text-anchor", "end")
+        .attr("font-size", "10px").attr("fill", "#666")
+        .text(`↔ ${2 * INSET_R / 1000} km`);
+}
+
 // Plume silhouette in the vertical plane along s, the mean drift direction.
 function draw_plan_panel(panel, W_plan, entries)
 {
@@ -734,7 +870,7 @@ function draw_plan_panel(panel, W_plan, entries)
         if (kl > 0 && kl < K)
         {
             envelope(0,  kl, parcel.color, PLUME_FILL_OP);
-            envelope(kl, K,  CLOUD_FILL,   1);
+            envelope(kl, K,  CLOUD_COLOR,  CLOUD_FILL_OP);
         }
         else
         {
@@ -749,25 +885,27 @@ function draw_plan_panel(panel, W_plan, entries)
             .attr("font-size", "11px").attr("fill", "#888")
             .text("Raise the sensible heat flux to launch a plume");
 
-    // Ground and fire. A triangle, as circles mean draggable values here.
+    // Ground and fire.
     dyn.append("line")
         .attr("x1", 0).attr("y1", PLAN_H)
         .attr("x2", W_plan).attr("y2", PLAN_H)
         .attr("stroke", "#666").attr("stroke-width", 1.5);
 
-    dyn.append("polygon")
-        .attr("points", `${x0},${PLAN_H - 7} ${x0 - 5},${PLAN_H} ${x0 + 5},${PLAN_H}`)
-        .attr("fill", "#333");
+    draw_fire_icon(dyn, x0, PLAN_H);
 
-    // Direction the plume drifts toward.
-    if (mag > 1e-2)
-        dyn.append("text")
-            .attr("x", W_plan - 4).attr("y", 12)
-            .attr("text-anchor", "end")
-            .attr("font-size", "11px").attr("fill", "#666")
-            .attr("stroke", "white").attr("stroke-width", 3)
-            .style("paint-order", "stroke fill")
-            .text(`toward ${Math.round((Math.atan2(hx, hy) * 180 / Math.PI + 360) % 360)}\u00b0`);
+    // A and A' mark the ends of the section, as on the inset's section line.
+    if (live.length > 0)
+    {
+        [[0, "start", "A"], [W_plan, "end", "A\u2032"]].forEach(([x, anchor, label]) =>
+            dyn.append("text")
+                .attr("x", x).attr("y", -6)
+                .attr("text-anchor", anchor)
+                .attr("font-size", "12px").attr("font-weight", 600).attr("fill", "#333")
+                .text(label));
+
+        draw_plan_inset(dyn, live, W_plan - INSET_SIZE - INSET_PAD, INSET_PAD,
+                        [-x0 / scale, (W_plan - x0) / scale], hx, hy);
+    }
 
     dyn.append("g")
         .attr("transform", `translate(0,${PLAN_H})`)

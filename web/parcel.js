@@ -21,6 +21,7 @@ export const A_W      = 1.0;
 export const B_W      = 0.2;
 export const FAC_ENT  = 1;  // Non-dimensional scaling of entrainment, from Eyken (2026)
 export const BETA     = 0.5; // The ratio fractional detrainment / fractional entrainment
+export const C_DET    = 2;   // Dynamic detrainment -C_DET/w dw/dz where w decreases; > 1 shrinks the area as w -> 0
 export const DZ_PLUME = 50;
 export const H0_PLUME = 20;
 
@@ -78,6 +79,7 @@ export function calc_parcel_ascent(
         b_w    = B_W,
         fac_ent = FAC_ENT,
         beta   = BETA,
+        c_det  = C_DET,
         dz     = DZ_PLUME,
         z_max  = 5000,
         full_ascent = false,
@@ -165,7 +167,8 @@ export function calc_parcel_ascent(
     let stopped = false;
     for (; i < n; i++)
     {
-        mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
+        // Constant-fraction detrainment only; the dynamic part is applied once w_p[i] is known.
+        mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - delt * mf_p[i-1]) * dz;
         // TODO: use thetal_e here instead of theta_e. Currently theta_e == thetal_e only
         // because the environment is assumed unsaturated (ql_e = 0). If the environment
         // is saturated, entrained air carries condensate and theta_e > thetal_e.
@@ -199,8 +202,13 @@ export function calc_parcel_ascent(
         const w2  = w_p[i-1]**2 + 2 * (a_w * buoy_p[i] - b_w * epsi * w_p[i-1]**2) * dz;
         w_p[i]    = k_top === -1 ? Math.sqrt(Math.max(0, w2)) : 0;
 
+        // Dynamic detrainment, integrated exactly over the step: M scales by (w_i / w_{i-1})^c_det.
+        const decel = k_top === -1 && w_p[i] >= w_eps && w_p[i] < w_p[i-1];
+        const delt_dyn = decel ? -c_det * Math.log(w_p[i] / w_p[i-1]) / dz : 0;
+        mf_p[i] *= Math.exp(-delt_dyn * dz);
+
         ent_p[i] = epsi * mf_p[i];
-        det_p[i] = delt * mf_p[i];
+        det_p[i] = (delt + delt_dyn) * mf_p[i];
 
         area_p[i] = w_p[i] > w_eps ? mf_p[i] / (rho_e[i] * w_p[i]) : NaN;
 
