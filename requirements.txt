@@ -1,0 +1,10 @@
+fastapi[standard]
+uvicorn[standard]
+numpy
+pandas
+xarray
+netCDF4
+requests
+openmeteo-requests
+requests-cache
+retry-requests
