@@ -2,7 +2,9 @@
 
 Online [skew-T log-p](https://en.wikipedia.org/wiki/Skew-T_log-P_diagram) tool for analysing wildfire - meteorology interactions, developed in the [ODET](https://www.paucostafoundation.org/en/odet-kicks-off-to-boost-europes-preparedness-for-extreme-wildfire-behaviour/) project.  
 
-Live demo: https://wildfire-meteo-35f3381e.fastapicloud.dev/
+Live demo:
+- https://wildfire-meteo-35f3381e.fastapicloud.dev/
+- https://wildfiremeteo.up.railway.app/
 
 Suggestion/issues: https://github.com/wildfire-meteo/wildfire-meteo-dmt/issues
 
