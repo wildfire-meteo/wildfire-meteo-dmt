@@ -201,6 +201,13 @@ main {
     cursor: default;
 }
 
+.sidebar-note {
+    font-size: 0.8rem;
+    font-style: italic;
+    line-height: 1.4;
+    color: var(--color-text-faint);
+}
+
 .sidebar input[type="range"] {
     -webkit-appearance: none;
     appearance: none;

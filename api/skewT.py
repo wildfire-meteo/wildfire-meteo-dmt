@@ -36,13 +36,16 @@ def get_static_lines(ktot=64):
 
     p_moist     = np.geomspace(105_000, 10_000, ktot)  # Full pressure grid for moist adiabats.
     p_dry       = np.geomspace(105_000, 50_000, ktot)  # Partial pressure grid for dry adiabats.
-    p_isotherms = np.array([105_000, 10_000])           # 2-point, full range.
-    p_isohumes  = np.array([105_000, 50_000])           # 2-point, partial range.
+    # Isotherms/isohumes are geometrically straight in T-space, so 2 points used to be
+    # enough — but the frontend can also plot these on a theta (non-linear) x-axis, where
+    # they curve, so they need the same per-level resolution as the adiabat families.
+    p_isotherms = p_moist  # Full range.
+    p_isohumes  = p_dry    # Partial range.
 
     # Start points (temperature in Celsius at 1000 hPa) of static lines.
     x0_isotherms      = np.arange(-120, 40.01, 10)
-    x0_dry_adiabats   = np.arange( -40, 50.01, 10)
-    x0_moist_adiabats = np.array([0, 5, 10, 15, 20, 25, 30, 35, 40])
+    x0_dry_adiabats   = np.arange( -40, 80.01, 10)
+    x0_moist_adiabats = np.arange(-15, 55.01, 5)
     r_isohumes        = np.array([0.5, 1, 2, 4, 8, 15, 30])  # g/kg
 
     # Isotherms: lines of constant absolute temperature.
