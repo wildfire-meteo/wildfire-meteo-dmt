@@ -106,7 +106,7 @@ def dewpoint(q, p):
         Dew-point temperature in Kelvin.
     """
     es  = esat_from_q(q, p)
-    lnr = np.log(np.maximum(np.finfo(float).tiny, es) / e0)
+    lnr = np.log(np.maximum(np.finfo(float).tiny, es / e0))
     Tc  = b * lnr / (a - lnr)
     return Tc + T0
 
