@@ -51,7 +51,7 @@ export function esat_from_q(q, p)
 export function dewpoint(q, p)
 {
     const es  = esat_from_q(q, p);
-    const lnr = Math.log(Math.max(Number.MIN_VALUE, es) / e0);
+    const lnr = Math.log(Math.max(Number.MIN_VALUE, es / e0));
     const Tc  = b * lnr / (a - lnr);
     return Tc + T0;
 }
