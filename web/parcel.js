@@ -26,7 +26,7 @@ export const DZ_PLUME = 50;
 export const H0_PLUME = 20;
 
 
-function interp(x, xp, fp)
+export function interp(x, xp, fp)
 {
     // Linear interpolation of fp at positions x, given sample points xp (ascending).
     const n = xp.length;
@@ -72,7 +72,7 @@ export function find_lcl(T_sfc, Td_sfc, p_sfc, tol=5)
 
 export function calc_parcel_ascent(
     z_env, T_env, Td_env, p_env, u_env, v_env,
-    dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s,
+    dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s, fire_area,
     {
         fire_multiplier = 1,
         a_w    = A_W,
@@ -153,8 +153,8 @@ export function calc_parcel_ascent(
     x_p[0] = 0;
     y_p[0] = 0;
 
-    // Entrainment settings (Morton formulation).
-    const epsi = fac_ent / Math.sqrt(area_plume_s);
+    // Entrainment settings (Morton formulation), scaled by the fire rather than the vented base.
+    const epsi = fac_ent / Math.sqrt(fire_area);
     const delt = epsi * beta;
 
     ent_p[0] = epsi * mf_p[0];

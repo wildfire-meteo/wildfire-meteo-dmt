@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { calc_parcel_ascent } from "./parcel.js";
+import { calc_parcel_ascent, interp, H0_PLUME } from "./parcel.js";
 import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
@@ -423,7 +423,18 @@ document.getElementById("fire_area").addEventListener("input", (e) =>
 {
     const p = active_parcel();
     if (!p) return;
+    const s_old = get_surface_state(p);
     p.fire_area = +e.target.value;
+    // Keep the fluxes fixed: the fire area sets the ventilation, and with it dθ and dq.
+    // Without a fire (w0 = 0) the fluxes are zero, so leave a dragged-in dq alone.
+    const s = get_surface_state(p);
+    if (s && s_old.w0 > 0)
+    {
+        const H  = H_from_dtheta(s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
+        const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
+        p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
+        p.dq     = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    }
     const area_km2 = 10 ** (p.fire_area - 6);
     const decimals = area_km2 < 0.1 ? 3 : 1;
     document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
@@ -432,18 +443,18 @@ document.getElementById("fire_area").addEventListener("input", (e) =>
 document.getElementById("fire_H").addEventListener("input", (e) =>
 {
     const p = active_parcel();
-    const base = get_surface_base();
-    if (p && base)
-        p.dtheta = dtheta_from_H(+e.target.value * 1e3, base.rho_sfc, base.thetav_sfc);
+    const s = p && get_surface_state(p);
+    if (s)
+        p.dtheta = dtheta_from_H(+e.target.value * 1e3, s.rho_sfc, s.thetav_sfc, s.u_vent);
     sync_flux_controls();
     draw_skewt();
 });
 document.getElementById("fire_LE").addEventListener("input", (e) =>
 {
     const p = active_parcel();
-    const base = get_surface_base();
-    if (p && base)
-        p.dq = dq_from_LE(+e.target.value * 1e3, p.dtheta, base.rho_sfc, base.thetav_sfc);
+    const s = p && get_surface_state(p);
+    if (s)
+        p.dq = dq_from_LE(+e.target.value * 1e3, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
     sync_flux_controls();
     draw_skewt();
 });
@@ -451,10 +462,10 @@ document.getElementById("fire_LE").addEventListener("input", (e) =>
 function sync_flux_controls()
 {
     const p = active_parcel();
-    const base = get_surface_base();
-    if (!p || !base) return;
-    const H_kw  = H_from_dtheta(p.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
-    const LE_kw = LE_from_dq(p.dq, p.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+    const s = p && get_surface_state(p);
+    if (!s) return;
+    const H_kw  = H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
+    const LE_kw = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
     document.getElementById("fire_H").value  = H_kw;
     document.getElementById("fire_LE").value = LE_kw;
     update_flux_labels(H_kw, LE_kw);
@@ -683,7 +694,28 @@ function get_surface_base()
     const thetav_sfc = virtual_temp(theta_sfc, qt_sfc);
     const rho_sfc    = p_sfc_pa / (Rd * exner_sfc * thetav_sfc);
 
-    return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
+    // Wind components on the parcel environment's levels (surface point followed by all levels
+    // above it; wd is where the wind blows from). No 10 m wind yet, so repeat the lowest level.
+    const z_env = [0, ...model_sounding.z_agl.slice(fallback_idx)];
+    const has_wind = !!model_sounding.ws;
+    const u_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.sin(model_sounding.wd[i] * Math.PI / 180)) : null;
+    const v_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.cos(model_sounding.wd[i] * Math.PI / 180)) : null;
+    const u_env = has_wind ? [u_lev[fallback_idx], ...u_lev.slice(fallback_idx)] : z_env.map(() => 0);
+    const v_env = has_wind ? [v_lev[fallback_idx], ...v_lev.slice(fallback_idx)] : z_env.map(() => 0);
+    const wind_speed = Math.hypot(interp([H0_PLUME], z_env, u_env)[0], interp([H0_PLUME], z_env, v_env)[0]);
+
+    return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc,
+             u_env, v_env, wind_speed };
+}
+
+// Surface base plus a parcel's fire excesses; u_vent is the wind's ventilation of the fire.
+function get_surface_state(parcel)
+{
+    const base = get_surface_base();
+    if (!base) return null;
+    const u_vent = base.wind_speed * H0_PLUME / Math.sqrt(10 ** parcel.fire_area);
+    const w0 = w0_from_dtheta(parcel.dtheta, base.thetav_sfc);
+    return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0, u_vent };
 }
 
 // Material Icons flame, centred on x with its base at y.
@@ -932,6 +964,9 @@ function draw_skewt()
 {
     svg.selectAll("*").remove();
 
+    // The sounding (time, surface T/Td, wind) sets the flux each dθ, dq carries, so refresh the labels.
+    sync_flux_controls();
+
     const show_model = document.getElementById("show_model_sounding").checked;
 
     const w_avail = svg.node().clientWidth - margin.left - margin.right;
@@ -1110,13 +1145,6 @@ function draw_skewt()
             const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
             const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
 
-            // Wind components (wd is where the wind blows from); no 10 m wind yet, so repeat the lowest level.
-            const has_wind = !!model_sounding.ws;
-            const u_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.sin(model_sounding.wd[i] * Math.PI / 180)) : null;
-            const v_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.cos(model_sounding.wd[i] * Math.PI / 180)) : null;
-            const u_env = has_wind ? [u_lev[idx_above], ...u_lev.slice(idx_above)] : z_env.map(() => 0);
-            const v_env = has_wind ? [v_lev[idx_above], ...v_lev.slice(idx_above)] : z_env.map(() => 0);
-
             // "Non-entraining" is the entraining plume with entrainment switched off: the
             // parcel then just conserves its initial thetal/qt with height (classic parcel
             // theory) while still accelerating under buoyancy alone. It needs a nominal
@@ -1129,9 +1157,13 @@ function draw_skewt()
             const fac_ent     = classic ? 0 : undefined;
             const w0          = classic ? Math.max(surf.w0, w0_eps) : surf.w0;
 
+            // The base area includes the air the wind vents downwind of the fire.
+            const fire_area = 10 ** parcel.fire_area;
+            const area      = surf.w0 > 0 ? fire_area * (surf.w0 + surf.u_vent) / surf.w0 : fire_area;
+
             return calc_parcel_ascent(
-                z_env, T_env, Td_env, p_env, u_env, v_env,
-                surf.dtheta, surf.dq, w0, 10 ** parcel.fire_area,
+                z_env, T_env, Td_env, p_env, surf.u_env, surf.v_env,
+                surf.dtheta, surf.dq, w0, area, fire_area,
                 { fac_ent, z_max: z_env[z_env.length - 1], full_ascent: classic },
             );
         }
@@ -1238,13 +1270,6 @@ function draw_skewt()
 
             if (w_panel) draw_w_panel(w_panel, y, H, drawn);
             if (plan_panel) draw_plan_panel(plan_panel, w_avail, drawn);
-        }
-
-        function get_surface_state(parcel)
-        {
-            const base = get_surface_base();
-            const w0 = w0_from_dtheta(parcel.dtheta, base.thetav_sfc);
-            return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0 };
         }
 
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
