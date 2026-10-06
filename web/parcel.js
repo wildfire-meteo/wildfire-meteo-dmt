@@ -22,7 +22,7 @@ export const B_W      = 0.2;
 export const FAC_ENT  = 1;  // Non-dimensional scaling of entrainment, from Eyken (2026)
 export const BETA     = 0.5; // The ratio fractional detrainment / fractional entrainment
 export const C_DET    = 2;   // Dynamic detrainment -C_DET/w dw/dz where w decreases; > 1 shrinks the area as w -> 0
-export const DZ_PLUME = 50;
+export const DZ_PLUME = 10;
 export const H0_PLUME = 20;
 
 
