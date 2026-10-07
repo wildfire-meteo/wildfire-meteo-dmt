@@ -953,6 +953,13 @@ function draw_plan_panel(panel, W_plan, entries)
         .selectAll("text").style("font-size", font_size);
 
     dyn.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -PLAN_H / 2).attr("y", -42)
+        .attr("text-anchor", "middle")
+        .style("font-size", font_size)
+        .text("Height AGL (km)");
+
+    dyn.append("text")
         .attr("x", W_plan).attr("y", PLAN_H + 34)
         .attr("text-anchor", "end")
         .style("font-size", font_size).attr("fill", "#666")
