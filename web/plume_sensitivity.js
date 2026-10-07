@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { calc_parcel_ascent } from "./parcel.js";
+import { calc_parcel_ascent, H0_PLUME } from "./parcel.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE } from "./fire_surface.js";
 
 
@@ -35,28 +35,30 @@ const margin = { top: 64, right: 150, bottom: 60, left: 76 };
 
 
 // Entraining plume for every (H, A) pair; rows follow H_kw, columns log_A.
+// The wind's ventilation depends on fire area, so the fluxes map to dθ, dq per pair.
 function compute(env, base, LE_kw, H_kw, log_A)
 {
     const { z_env, T_env, Td_env, p_env } = env;
     const z_max = z_env[z_env.length - 1];
 
-    return H_kw.map(H =>
+    return H_kw.map(H => log_A.map(la =>
     {
-        const dtheta = dtheta_from_H(H * 1e3, base.rho_sfc, base.thetav_sfc);
-        const dq     = dq_from_LE(LE_kw * 1e3, dtheta, base.rho_sfc, base.thetav_sfc);
+        const fire_area = 10 ** la;
+        const u_vent = base.wind_speed * H0_PLUME / Math.sqrt(fire_area);
+        const dtheta = dtheta_from_H(H * 1e3, base.rho_sfc, base.thetav_sfc, u_vent);
+        const dq     = dq_from_LE(LE_kw * 1e3, dtheta, base.rho_sfc, base.thetav_sfc, u_vent);
         const w0     = w0_from_dtheta(dtheta, base.thetav_sfc);
+        // The base area includes the air the wind vents downwind of the fire.
+        const area   = w0 > 0 ? fire_area * (w0 + u_vent) / w0 : fire_area;
 
-        return log_A.map(la =>
-        {
-            const r = calc_parcel_ascent(z_env, T_env, Td_env, p_env, dtheta, dq, w0, 10 ** la, { z_max });
-            if (!r.z.length) return { top: 0, w_max: 0, cloudy: false };
-            // Plumes still rising at the top of the sounding are cut from the curves.
-            if (!r.stopped)  return { top: NaN, w_max: NaN, cloudy: false };
-            return { top: r.z[r.k_top], w_max: Math.max(...r.w), cloudy: r.k_lcl !== -1 };
-        });
-    });
+        const r = calc_parcel_ascent(z_env, T_env, Td_env, p_env, base.u_env, base.v_env,
+                                     dtheta, dq, w0, area, fire_area, { z_max });
+        if (!r.z.length) return { top: 0, w_max: 0, cloudy: false };
+        // Plumes still rising at the top of the sounding are cut from the curves.
+        if (!r.stopped)  return { top: NaN, w_max: NaN, cloudy: false };
+        return { top: r.z[r.k_top], w_max: Math.max(...r.w), cloudy: r.k_lcl !== -1 };
+    }));
 }
-
 
 function draw_curves(g, W, H, grid, key, z_top)
 {
