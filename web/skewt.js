@@ -19,6 +19,7 @@ import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
+import { download_plume_sensitivity } from "./plume_sensitivity.js";
 
 const svg = d3.select("#skewt");
 
@@ -292,6 +293,7 @@ function render_parcel_list()
     }
 
     sync_w_panel_control();
+    sync_sensitivity_control();
 }
 
 function row_icon(glyph, title, on_click)
@@ -385,10 +387,21 @@ function sync_w_panel_control()
     document.getElementById("show_w_panel").disabled = parcels.length === 0;
 }
 
+// Only entraining plumes depend on fire area, so the plot is offered for those alone.
+function sync_sensitivity_control()
+{
+    const show = active_parcel()?.mode === "entraining";
+    document.getElementById("sens_toggle_btn").style.display = show ? "" : "none";
+    if (show) return;
+    document.getElementById("sens_options").style.display = "none";
+    document.getElementById("sens_toggle_icon").textContent = "expand_more";
+}
+
 document.getElementById("parcel_mode").addEventListener("change", (e) =>
 {
     const p = active_parcel();
     if (p) p.mode = e.target.value;
+    sync_sensitivity_control();
     draw_skewt();
 });
 // Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
@@ -442,6 +455,34 @@ function update_flux_labels(H_kw, LE_kw)
     document.getElementById("fire_LE_label").textContent =
         `Latent heat flux: ${LE_kw.toFixed(1)} kW/m²`;
 }
+document.getElementById("sens_toggle_btn").addEventListener("click", () =>
+{
+    const opts = document.getElementById("sens_options");
+    const open = opts.style.display === "none";
+    opts.style.display = open ? "" : "none";
+    document.getElementById("sens_toggle_icon").textContent = open ? "expand_less" : "expand_more";
+});
+document.getElementById("sens_download_btn").addEventListener("click", () =>
+{
+    const base = get_surface_base();
+    const env  = get_parcel_env();
+    if (!base || !env || !active_parcel()) return;
+
+    const p     = active_parcel();
+    const LE_kw = LE_from_dq(p.dq, p.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
+
+    const model = document.getElementById("model_select").selectedOptions[0].text;
+    const lat   = document.getElementById("lat_input").value;
+    const lon   = document.getElementById("lon_input").value;
+    const date  = document.getElementById("date_input").value;
+    const time  = model_forecast?.times[current_time] ?? "";
+
+    download_plume_sensitivity({
+        env, base, LE_kw,
+        key:      document.getElementById("sens_quantity").value,
+        subtitle: `${model} · ${date} ${time} UTC · ${lat}, ${lon}`,
+    });
+});
 document.getElementById("show_isobars").addEventListener("change", draw_skewt);
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
 document.getElementById("show_isohumes").addEventListener("change", () =>
@@ -660,6 +701,29 @@ function get_surface_base()
     return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
 }
 
+// Environment the plume rises through: surface point followed by all levels above it.
+function get_parcel_env()
+{
+    const base = get_surface_base();
+    if (!base) return null;
+
+    // Index of the first pressure level strictly above the surface.
+    // p_pa_all is sorted descending (highest pressure first).
+    const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
+    const idx_above = p_pa_all.findIndex(pp => pp < base.p_sfc_pa);
+    if (idx_above === -1) return null;
+
+    // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+    const z_sfc_agl = 0;
+
+    return {
+        p_env:  [base.p_sfc_pa,   ...p_pa_all.slice(idx_above)],
+        T_env:  [base.T_env_sfc,  ...model_sounding.T.slice(idx_above)],
+        Td_env: [base.Td_env_sfc, ...model_sounding.Td.slice(idx_above)],
+        z_env:  [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)],
+    };
+}
+
 function draw_skewt()
 {
     svg.selectAll("*").remove();
@@ -789,25 +853,12 @@ function draw_skewt()
             .attr("fill", "#666")
             .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
 
-        const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
-
         function run_parcel(parcel)
         {
             const surf = get_surface_state(parcel);
-
-            // Index of the first pressure level strictly above the surface.
-            // p_pa_all is sorted descending (highest pressure first).
-            const idx_above = p_pa_all.findIndex(pp => pp < surf.p_sfc_pa);
-            if (idx_above === -1) return null;
-
-            // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
-            const z_sfc_agl = 0;
-
-            // Environment: surface point followed by all levels above the surface.
-            const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
-            const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
-            const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
-            const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+            const env  = get_parcel_env();
+            if (!env) return null;
+            const { z_env, T_env, Td_env, p_env } = env;
 
             // "Non-entraining" is the entraining plume with entrainment switched off: the
             // parcel then just conserves its initial thetal/qt with height (classic parcel
