@@ -1161,7 +1161,8 @@ function draw_skewt()
             // then the classic construction for reading LFC, EL, CAPE and CIN.
             const w0_eps      = 1e-3;
             const classic     = parcel.mode === "non_entraining";
-            const fac_ent     = classic ? 0 : undefined;
+            // Classic parcel theory: no entrainment, and buoyancy fully accelerates w.
+            const no_ent      = classic ? { a_e: 0, b_e: 0, a_w: 1 } : {};
             const w0          = classic ? Math.max(surf.w0, w0_eps) : surf.w0;
 
             // The base area includes the air the wind vents downwind of the fire.
@@ -1171,7 +1172,7 @@ function draw_skewt()
             return calc_parcel_ascent(
                 z_env, T_env, Td_env, p_env, surf.u_env, surf.v_env,
                 surf.dtheta, surf.dq, w0, area, fire_area,
-                { fac_ent, z_max: z_env[z_env.length - 1], full_ascent: classic },
+                { ...no_ent, z_max: z_env[z_env.length - 1], full_ascent: classic },
             );
         }
 
