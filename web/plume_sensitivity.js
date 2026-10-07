@@ -62,7 +62,7 @@ function compute(env, base, LE_kw, H_kw, log_A)
 
 function draw_curves(g, W, H, grid, key, z_top)
 {
-    const x = d3.scaleLog().domain([10 ** (LOG_A[0] - 6), 10 ** (LOG_A[LOG_A.length - 1] - 6)]).range([0, W]);
+    const x = d3.scaleLog().domain([10 ** (LOG_A[0] - 4), 10 ** (LOG_A[LOG_A.length - 1] - 4)]).range([0, W]);
     const y = d3.scaleLinear()
         .domain([0, d3.max(grid.flat(), c => c[key]) || 1]).nice().range([H, 0]);
     if (key === "top" && y.domain()[1] > z_top) y.domain([0, z_top]);
@@ -73,7 +73,7 @@ function draw_curves(g, W, H, grid, key, z_top)
 
     // Light to dark with increasing intensity.
     const shade = d3.scaleLinear().domain([0, H_CURVE.length - 1]).range([0.35, 1]);
-    const line  = d3.line().defined(d => !isNaN(d[key])).x((_, k) => x(10 ** (LOG_A[k] - 6))).y(d => y(d[key]));
+    const line  = d3.line().defined(d => !isNaN(d[key])).x((_, k) => x(10 ** (LOG_A[k] - 4))).y(d => y(d[key]));
 
     grid.forEach((row, k) =>
     {
@@ -84,7 +84,7 @@ function draw_curves(g, W, H, grid, key, z_top)
         // First fire area at which the plume forms a cloud.
         const k_cloud = row.findIndex(d => d.cloudy);
         if (k_cloud !== -1)
-            cloud_marker(g, x(10 ** (LOG_A[k_cloud] - 6)), y(row[k_cloud][key]), c);
+            cloud_marker(g, x(10 ** (LOG_A[k_cloud] - 4)), y(row[k_cloud][key]), c);
 
         g.append("line")
             .attr("x1", W + 20).attr("x2", W + 44)
@@ -111,7 +111,7 @@ function draw_curves(g, W, H, grid, key, z_top)
         .call(d3.axisBottom(x).ticks(5, "~g")).call(style_axis);
     g.append("g").call(d3.axisLeft(y).ticks(6)).call(style_axis);
 
-    return { x_label: "Fire area (km²)", y_label: QUANTITIES[key].label };
+    return { x_label: "Fire area (ha)", y_label: QUANTITIES[key].label };
 }
 
 
