@@ -18,7 +18,7 @@ import { calc_parcel_ascent, H0_PLUME } from "./parcel.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE } from "./fire_surface.js";
 
 
-// Fire area spans the slider range.
+// Fire area spans 0.1 to 1,000 ha.
 const LOG_A   = d3.range(3, 7.001, 0.1);
 const H_CURVE = [10, 25, 50, 100, 150, 250];
 

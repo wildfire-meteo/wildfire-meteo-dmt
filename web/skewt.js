@@ -395,13 +395,7 @@ function load_parcel_into_editor()
     if (!p) return;
 
     document.getElementById("parcel_mode").value = p.mode;
-    document.getElementById("fire_area").value = p.fire_area;
-
-    const area_km2 = 10 ** (p.fire_area - 6);
-    const decimals = area_km2 < 0.1 ? 3 : 1;
-    document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
-
-    sync_flux_controls();
+    sync_fire_controls();
 }
 
 function sync_panel_controls()
@@ -432,34 +426,59 @@ document.getElementById("show_w_panel").addEventListener("change", () =>
     zoom.transform(svg, d3.zoomIdentity));
 document.getElementById("show_plan_panel").addEventListener("change", () =>
     zoom.transform(svg, d3.zoomIdentity));
-document.getElementById("fire_area").addEventListener("input", (e) =>
+// Firefighter inputs (log10): fire line intensity (kW/m), fire front width and depth (m).
+// The model sees H = (1 - RADIATIVE_HEAT_LOSS) · FLI / depth over A = depth · width.
+// Depth is stored, so dragging the surface T changes FLI at fixed depth and area.
+const RADIATIVE_HEAT_LOSS = 0.6;   // fraction of FLI radiated away rather than heating the air
+const LOG_FLI_MIN = 2;             // FLI slider positions below this mean no fire
+
+// Moves the fire to a new area and heat flux at fixed latent heat flux. Without a fire
+// (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
+function set_fire(p, fire_area, H)
+{
+    const s_old = get_surface_state(p);
+    p.fire_area = fire_area;
+    const s = get_surface_state(p);
+    if (!s) return;
+    const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
+    p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    if (s_old.w0 > 0 && p.dtheta > 0)
+        p.dq = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+}
+
+function fire_H(p)
+{
+    const s = get_surface_state(p);
+    return s ? H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) : 0;
+}
+
+document.getElementById("fire_fli").addEventListener("input", (e) =>
 {
     const p = active_parcel();
     if (!p) return;
-    const s_old = get_surface_state(p);
-    p.fire_area = +e.target.value;
-    // Keep the fluxes fixed: the fire area sets the ventilation, and with it dθ and dq.
-    // Without a fire (w0 = 0) the fluxes are zero, so leave a dragged-in dq alone.
-    const s = get_surface_state(p);
-    if (s && s_old.w0 > 0)
-    {
-        const H  = H_from_dtheta(s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
-        const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
-        p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
-        p.dq     = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
-    }
-    const area_km2 = 10 ** (p.fire_area - 6);
-    const decimals = area_km2 < 0.1 ? 3 : 1;
-    document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
+    const log_fli = +e.target.value;
+    set_fire(p, p.fire_area, log_fli < LOG_FLI_MIN ? 0 : (1 - RADIATIVE_HEAT_LOSS) * 10 ** (log_fli + 3 - p.fire_depth));
+    sync_fire_controls();
     draw_skewt();
 });
-document.getElementById("fire_H").addEventListener("input", (e) =>
+document.getElementById("fire_width").addEventListener("input", (e) =>
 {
     const p = active_parcel();
-    const s = p && get_surface_state(p);
-    if (s)
-        p.dtheta = dtheta_from_H(+e.target.value * 1e3, s.rho_sfc, s.thetav_sfc, s.u_vent);
-    sync_flux_controls();
+    if (!p) return;
+    set_fire(p, p.fire_depth + +e.target.value, fire_H(p));
+    sync_fire_controls();
+    draw_skewt();
+});
+// Deepening the front spreads the same intensity over a larger area at a lower flux.
+document.getElementById("fire_depth").addEventListener("input", (e) =>
+{
+    const p = active_parcel();
+    if (!p) return;
+    const HD    = fire_H(p) * 10 ** p.fire_depth;
+    const log_L = p.fire_area - p.fire_depth;
+    p.fire_depth = +e.target.value;
+    set_fire(p, p.fire_depth + log_L, HD / 10 ** p.fire_depth);
+    sync_fire_controls();
     draw_skewt();
 });
 document.getElementById("fire_LE").addEventListener("input", (e) =>
@@ -468,28 +487,38 @@ document.getElementById("fire_LE").addEventListener("input", (e) =>
     const s = p && get_surface_state(p);
     if (s)
         p.dq = dq_from_LE(+e.target.value * 1e3, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
-    sync_flux_controls();
+    sync_fire_controls();
     draw_skewt();
 });
 
-function sync_flux_controls()
+function sync_fire_controls()
 {
     const p = active_parcel();
-    const s = p && get_surface_state(p);
-    if (!s) return;
-    const H_kw  = H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
-    const LE_kw = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
-    document.getElementById("fire_H").value  = H_kw;
-    document.getElementById("fire_LE").value = LE_kw;
-    update_flux_labels(H_kw, LE_kw);
-}
+    if (!p) return;
 
-function update_flux_labels(H_kw, LE_kw)
-{
-    document.getElementById("fire_H_label").textContent =
-        `Sensible heat flux: ${H_kw.toFixed(1)} kW/m²`;
-    document.getElementById("fire_LE_label").textContent =
-        `Latent heat flux: ${LE_kw.toFixed(1)} kW/m²`;
+    const depth = 10 ** p.fire_depth;
+    const L     = 10 ** (p.fire_area - p.fire_depth);
+    document.getElementById("fire_depth").value = p.fire_depth;
+    document.getElementById("fire_width").value = p.fire_area - p.fire_depth;
+    document.getElementById("fire_depth_label").textContent = `Fire front depth: ${d3.format(".2~r")(depth)} m`;
+    document.getElementById("fire_width_label").textContent = L < 1e3
+        ? `Fire front width: ${d3.format(".2~r")(L)} m`
+        : `Fire front width: ${d3.format(".2~r")(L / 1e3)} km`;
+
+    const s = get_surface_state(p);
+    if (!s) return;
+    const H   = H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    const LE  = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    const fli = H * depth / (1 - RADIATIVE_HEAT_LOSS) / 1e3;
+    document.getElementById("fire_fli").value = fli > 0 ? Math.max(Math.log10(fli), LOG_FLI_MIN) : 0;
+    document.getElementById("fire_LE").value  = LE / 1e3;
+    document.getElementById("fire_fli_label").textContent = fli > 0
+        ? `Fire line intensity: ${d3.format(",.3~r")(fli)} kW/m`
+        : "Fire line intensity: none";
+    document.getElementById("fire_LE_label").textContent = `Latent heat flux: ${(LE / 1e3).toFixed(1)} kW/m²`;
+
+    document.getElementById("fire_model_note").innerHTML =
+        `Sensible heat flux: ${(H / 1e3).toFixed(1)} kW/m²<br>Fire area: ${d3.format(",.2~r")(10 ** p.fire_area / 1e4)} ha`;
 }
 document.getElementById("sens_toggle_btn").addEventListener("click", () =>
 {
@@ -1035,7 +1064,7 @@ function draw_skewt()
     svg.selectAll("*").remove();
 
     // The sounding (time, surface T/Td, wind) sets the flux each dθ, dq carries, so refresh the labels.
-    sync_flux_controls();
+    sync_fire_controls();
 
     const show_model = document.getElementById("show_model_sounding").checked;
 
@@ -1384,49 +1413,45 @@ function draw_skewt()
 
         const edit_parcel = active_parcel();
 
-        if (!document.getElementById("edit_mode").checked && edit_parcel)
+        if (!document.getElementById("edit_mode").checked && edit_parcel && get_parcel_env())
         {
-            const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
+            // The plume starts at H0, so the handles sit on the environment there.
+            const env   = get_parcel_env();
+            const p_h0  = interp([H0_PLUME], env.z_env, env.p_env)[0];
+            const T_h0  = interp([H0_PLUME], env.z_env, env.T_env)[0];
+            const qt_h0 = qsat(interp([H0_PLUME], env.z_env, env.Td_env)[0], p_h0);
+            const ex_h0 = exner(p_h0);
 
-            const surf0  = get_surface_state(edit_parcel);
-            const T_marker_val  = () => {
-                const s = get_surface_state(edit_parcel);
-                return s.T_env_sfc + s.dtheta * s.exner_sfc;
-            };
-            const Td_marker_val = () => {
-                const s = get_surface_state(edit_parcel);
-                return dewpoint(s.qt_sfc + s.dq, s.p_sfc_pa);
-            };
+            const T_marker_val  = () => T_h0 + edit_parcel.dtheta * ex_h0;
+            const Td_marker_val = () => dewpoint(qt_h0 + edit_parcel.dq, p_h0);
 
-            const y_sfc  = y(sfc_p_hpa_marker);
             const handle = (cx) => chart.append("circle")
-                .attr("cx", cx).attr("cy", y_sfc)
+                .attr("cx", cx).attr("cy", y(p_h0 / 100))
                 .attr("r", 5)
                 .attr("fill", "white")
                 .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
                 .style("cursor", "grab");
 
-            const T_node  = handle(x(skew_transform(surf0.T_env_sfc + surf0.dtheta * surf0.exner_sfc, sfc_p_hpa_marker)));
-            const Td_node = handle(x(skew_transform(dewpoint(surf0.qt_sfc + surf0.dq, surf0.p_sfc_pa), sfc_p_hpa_marker)));
+            const T_node  = handle(x(skew_transform(T_marker_val(),  p_h0 / 100)));
+            const Td_node = handle(x(skew_transform(Td_marker_val(), p_h0 / 100)));
 
             const reposition_markers = () =>
             {
-                T_node.attr("cx",  x(skew_transform(T_marker_val(),  sfc_p_hpa_marker)));
-                Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
+                T_node.attr("cx",  x(skew_transform(T_marker_val(),  p_h0 / 100)));
+                Td_node.attr("cx", x(skew_transform(Td_marker_val(), p_h0 / 100)));
             };
 
             const make_drag = (axis) => d3.drag()
                 .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
                 .on("drag", function (event)
                 {
-                    const s = get_surface_state(edit_parcel);
-                    const val_new = inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker);
+                    const val_new = inv_skew_transform(x.invert(event.x), p_h0 / 100);
                     if (axis === "T")
-                        edit_parcel.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
+                        edit_parcel.dtheta = Math.max(0, (val_new - T_h0) / ex_h0);
                     else
-                        edit_parcel.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
-                    sync_flux_controls();
+                        edit_parcel.dq = Math.max(0, qsat(val_new, p_h0) - qt_h0);
+                    sync_fire_controls();
                     reposition_markers();
                     redraw_all_parcels();
                 })
