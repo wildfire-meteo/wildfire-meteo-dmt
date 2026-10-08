@@ -852,7 +852,8 @@ function draw_plan_inset(parent, live, ix, iy, s_range, hx, hy)
     live.forEach(({ parcel, result, is_active }) =>
     {
         const K     = result.k_top;
-        const kl    = result.k_lcl > 0 ? result.k_lcl : K + 1;
+        // With full ascent, cloud base can lie above where the plume stopped.
+        const kl    = result.k_lcl > 0 && result.k_lcl < K ? result.k_lcl : K + 1;
         const discs = d3.range(K + 1).map(k =>
         {
             const a = result.area[k];
