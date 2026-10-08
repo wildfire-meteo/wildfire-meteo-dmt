@@ -29,6 +29,8 @@ let current_zoom = d3.zoomIdentity;
 
 const zoom = d3.zoom()
     .scaleExtent([0.5, 10])
+    // Plain wheel scrolls the page; pinch (ctrlKey) or Ctrl/Cmd + wheel zooms.
+    .filter(event => event.type === "wheel" ? event.ctrlKey || event.metaKey : !event.ctrlKey && !event.button)
     .on("zoom", (event) => { current_zoom = event.transform; draw_skewt(); });
 
 svg.call(zoom);
@@ -811,17 +813,20 @@ function get_surface_state(parcel)
     return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0, u_vent };
 }
 
-// Material Icons flame, centred on x with its base at y.
+// Material Icons flame (24px viewBox), centred on x with its base at y. A path, not
+// the icon font, so it survives PNG export.
+const FIRE_PATH = "m12 12.9-2.13 2.09c-.56.56-.87 1.29-.87 2.07C9 18.68 10.35 20 12 20s3-1.32 3-2.94c0-.78-.31-1.52-.87-2.07L12 12.9z"
+    + "m4-6.9-.44.55C14.38 8.02 12 7.19 12 5.3V2S4 6 4 13c0 2.92 1.56 5.47 3.89 6.86-.56-.79-.89-1.76-.89-2.8 0-1.32.52-2.56 1.47-3.5L12 10.1l3.53 3.47c.95.93 1.47 2.17 1.47 3.5 0 1.02-.31 1.96-.85 2.75 1.89-1.15 3.29-3.06 3.71-5.3.66-3.55-1.07-6.9-3.86-8.52z";
+
 function draw_fire_icon(parent, x, y)
 {
-    parent.append("text")
-        .attr("x", x).attr("y", y)
-        .attr("text-anchor", "middle")
-        .style("font-family", "Material Icons").style("font-size", `${FIRE_ICON}px`)
+    const k = FIRE_ICON / 24;
+    parent.append("path")
+        .attr("d", FIRE_PATH)
+        .attr("transform", `translate(${x - FIRE_ICON / 2},${y - FIRE_ICON}) scale(${k})`)
         .attr("fill", "#333")
-        .attr("stroke", "white").attr("stroke-width", 2.5)
-        .style("paint-order", "stroke fill")
-        .text("local_fire_department");
+        .attr("stroke", "white").attr("stroke-width", 2.5 / k)
+        .style("paint-order", "stroke fill");
 }
 
 // North-up top view centred on the fire: plume footprints and tracks over the whole
@@ -1712,14 +1717,39 @@ document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListene
 
 document.getElementById("download_btn").addEventListener("click", () =>
 {
-    const node = document.querySelector(".plot");
-    domtoimage.toPng(node).then(data_url =>
+    // SVG → canvas → PNG; inherited styles go on the clone's root.
+    const node  = svg.node();
+    const style = getComputedStyle(node);
+    // Crop to the laid-out height: CSS stretches the SVG down with long sidebars.
+    const width  = node.clientWidth;
+    const height = Math.min(+node.getAttribute("height"), node.clientHeight);
+    const clone = node.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", width);
+    clone.setAttribute("height", height);
+    clone.style.fontFamily = style.fontFamily;
+    clone.style.fontSize   = style.fontSize;
+    clone.style.color      = style.color;
+
+    const img = new Image();
+    img.onload = () =>
     {
+        const scale  = 2;
+        const canvas = document.createElement("canvas");
+        canvas.width  = width * scale;
+        canvas.height = height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.fillStyle = getComputedStyle(node.closest(".plot")).backgroundColor;
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0);
+
         const a = document.createElement("a");
         a.download = "skewt.png";
-        a.href = data_url;
+        a.href = canvas.toDataURL("image/png");
         a.click();
-    });
+    };
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone));
 });
 
 render_parcel_list();
