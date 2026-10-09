@@ -19,6 +19,7 @@ import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
+import { download_plume_sensitivity } from "./plume_sensitivity.js";
 
 const svg = d3.select("#skewt");
 
@@ -28,6 +29,8 @@ let current_zoom = d3.zoomIdentity;
 
 const zoom = d3.zoom()
     .scaleExtent([0.5, 10])
+    // Plain wheel scrolls the page; pinch (ctrlKey) or Ctrl/Cmd + wheel zooms.
+    .filter(event => event.type === "wheel" ? event.ctrlKey || event.metaKey : !event.ctrlKey && !event.button)
     .on("zoom", (event) => { current_zoom = event.transform; draw_skewt(); });
 
 svg.call(zoom);
@@ -314,6 +317,7 @@ function render_parcel_list()
     }
 
     sync_panel_controls();
+    sync_sensitivity_control();
 }
 
 function row_icon(glyph, title, on_click)
@@ -393,13 +397,7 @@ function load_parcel_into_editor()
     if (!p) return;
 
     document.getElementById("parcel_mode").value = p.mode;
-    document.getElementById("fire_area").value = p.fire_area;
-
-    const area_km2 = 10 ** (p.fire_area - 6);
-    const decimals = area_km2 < 0.1 ? 3 : 1;
-    document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
-
-    sync_flux_controls();
+    sync_fire_controls();
 }
 
 function sync_panel_controls()
@@ -408,10 +406,21 @@ function sync_panel_controls()
     document.getElementById("show_plan_panel").disabled = parcels.length === 0;
 }
 
+// Only entraining plumes depend on fire area, so the plot is offered for those alone.
+function sync_sensitivity_control()
+{
+    const show = active_parcel()?.mode === "entraining";
+    document.getElementById("sens_toggle_btn").style.display = show ? "" : "none";
+    if (show) return;
+    document.getElementById("sens_options").style.display = "none";
+    document.getElementById("sens_toggle_icon").textContent = "expand_more";
+}
+
 document.getElementById("parcel_mode").addEventListener("change", (e) =>
 {
     const p = active_parcel();
     if (p) p.mode = e.target.value;
+    sync_sensitivity_control();
     draw_skewt();
 });
 // Toggling a panel changes the plot size, so reset the pixel-space zoom (this redraws).
@@ -419,34 +428,59 @@ document.getElementById("show_w_panel").addEventListener("change", () =>
     zoom.transform(svg, d3.zoomIdentity));
 document.getElementById("show_plan_panel").addEventListener("change", () =>
     zoom.transform(svg, d3.zoomIdentity));
-document.getElementById("fire_area").addEventListener("input", (e) =>
+// Firefighter inputs (log10): fire line intensity (kW/m), fire front width and depth (m).
+// The model sees H = (1 - RADIATIVE_HEAT_LOSS) · FLI / depth over A = depth · width.
+// Depth is stored, so dragging the surface T changes FLI at fixed depth and area.
+const RADIATIVE_HEAT_LOSS = 0.6;   // fraction of FLI radiated away rather than heating the air
+const LOG_FLI_MIN = 2;             // FLI slider positions below this mean no fire
+
+// Moves the fire to a new area and heat flux at fixed latent heat flux. Without a fire
+// (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
+function set_fire(p, fire_area, H)
+{
+    const s_old = get_surface_state(p);
+    p.fire_area = fire_area;
+    const s = get_surface_state(p);
+    if (!s) return;
+    const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
+    p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    if (s_old.w0 > 0 && p.dtheta > 0)
+        p.dq = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+}
+
+function fire_H(p)
+{
+    const s = get_surface_state(p);
+    return s ? H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) : 0;
+}
+
+document.getElementById("fire_fli").addEventListener("input", (e) =>
 {
     const p = active_parcel();
     if (!p) return;
-    const s_old = get_surface_state(p);
-    p.fire_area = +e.target.value;
-    // Keep the fluxes fixed: the fire area sets the ventilation, and with it dθ and dq.
-    // Without a fire (w0 = 0) the fluxes are zero, so leave a dragged-in dq alone.
-    const s = get_surface_state(p);
-    if (s && s_old.w0 > 0)
-    {
-        const H  = H_from_dtheta(s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
-        const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
-        p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
-        p.dq     = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
-    }
-    const area_km2 = 10 ** (p.fire_area - 6);
-    const decimals = area_km2 < 0.1 ? 3 : 1;
-    document.getElementById("fire_area_label").textContent = `Fire area: ${area_km2.toFixed(decimals)} km²`;
+    const log_fli = +e.target.value;
+    set_fire(p, p.fire_area, log_fli < LOG_FLI_MIN ? 0 : (1 - RADIATIVE_HEAT_LOSS) * 10 ** (log_fli + 3 - p.fire_depth));
+    sync_fire_controls();
     draw_skewt();
 });
-document.getElementById("fire_H").addEventListener("input", (e) =>
+document.getElementById("fire_width").addEventListener("input", (e) =>
 {
     const p = active_parcel();
-    const s = p && get_surface_state(p);
-    if (s)
-        p.dtheta = dtheta_from_H(+e.target.value * 1e3, s.rho_sfc, s.thetav_sfc, s.u_vent);
-    sync_flux_controls();
+    if (!p) return;
+    set_fire(p, p.fire_depth + +e.target.value, fire_H(p));
+    sync_fire_controls();
+    draw_skewt();
+});
+// Deepening the front spreads the same intensity over a larger area at a lower flux.
+document.getElementById("fire_depth").addEventListener("input", (e) =>
+{
+    const p = active_parcel();
+    if (!p) return;
+    const HD    = fire_H(p) * 10 ** p.fire_depth;
+    const log_L = p.fire_area - p.fire_depth;
+    p.fire_depth = +e.target.value;
+    set_fire(p, p.fire_depth + log_L, HD / 10 ** p.fire_depth);
+    sync_fire_controls();
     draw_skewt();
 });
 document.getElementById("fire_LE").addEventListener("input", (e) =>
@@ -455,29 +489,67 @@ document.getElementById("fire_LE").addEventListener("input", (e) =>
     const s = p && get_surface_state(p);
     if (s)
         p.dq = dq_from_LE(+e.target.value * 1e3, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
-    sync_flux_controls();
+    sync_fire_controls();
     draw_skewt();
 });
 
-function sync_flux_controls()
+function sync_fire_controls()
 {
     const p = active_parcel();
-    const s = p && get_surface_state(p);
-    if (!s) return;
-    const H_kw  = H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
-    const LE_kw = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
-    document.getElementById("fire_H").value  = H_kw;
-    document.getElementById("fire_LE").value = LE_kw;
-    update_flux_labels(H_kw, LE_kw);
-}
+    if (!p) return;
 
-function update_flux_labels(H_kw, LE_kw)
-{
-    document.getElementById("fire_H_label").textContent =
-        `Sensible heat flux: ${H_kw.toFixed(1)} kW/m²`;
-    document.getElementById("fire_LE_label").textContent =
-        `Latent heat flux: ${LE_kw.toFixed(1)} kW/m²`;
+    const depth = 10 ** p.fire_depth;
+    const L     = 10 ** (p.fire_area - p.fire_depth);
+    document.getElementById("fire_depth").value = p.fire_depth;
+    document.getElementById("fire_width").value = p.fire_area - p.fire_depth;
+    document.getElementById("fire_depth_label").textContent = `Fire front depth: ${d3.format(".2~r")(depth)} m`;
+    document.getElementById("fire_width_label").textContent = L < 1e3
+        ? `Fire front width: ${d3.format(".2~r")(L)} m`
+        : `Fire front width: ${d3.format(".2~r")(L / 1e3)} km`;
+
+    const s = get_surface_state(p);
+    if (!s) return;
+    const H   = H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    const LE  = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    const fli = H * depth / (1 - RADIATIVE_HEAT_LOSS) / 1e3;
+    document.getElementById("fire_fli").value = fli > 0 ? Math.max(Math.log10(fli), LOG_FLI_MIN) : 0;
+    document.getElementById("fire_LE").value  = LE / 1e3;
+    document.getElementById("fire_fli_label").textContent = fli > 0
+        ? `Fire line intensity: ${d3.format(",.3~r")(fli)} kW/m`
+        : "Fire line intensity: none";
+    document.getElementById("fire_LE_label").textContent = `Latent heat flux: ${(LE / 1e3).toFixed(1)} kW/m²`;
+
+    document.getElementById("fire_model_note").innerHTML =
+        `Sensible heat flux: ${(H / 1e3).toFixed(1)} kW/m²<br>Fire area: ${d3.format(",.2~r")(10 ** p.fire_area / 1e4)} ha`;
 }
+document.getElementById("sens_toggle_btn").addEventListener("click", () =>
+{
+    const opts = document.getElementById("sens_options");
+    const open = opts.style.display === "none";
+    opts.style.display = open ? "" : "none";
+    document.getElementById("sens_toggle_icon").textContent = open ? "expand_less" : "expand_more";
+});
+document.getElementById("sens_download_btn").addEventListener("click", () =>
+{
+    const p    = active_parcel();
+    const s    = p && get_surface_state(p);
+    const env  = get_parcel_env();
+    if (!s || !env) return;
+
+    const LE_kw = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
+
+    const model = document.getElementById("model_select").selectedOptions[0].text;
+    const lat   = document.getElementById("lat_input").value;
+    const lon   = document.getElementById("lon_input").value;
+    const date  = document.getElementById("date_input").value;
+    const time  = model_forecast?.times[current_time] ?? "";
+
+    download_plume_sensitivity({
+        env, base: s, LE_kw,
+        key:      document.getElementById("sens_quantity").value,
+        subtitle: `${model} · ${date} ${time} UTC · ${lat}, ${lon}`,
+    });
+});
 document.getElementById("show_isobars").addEventListener("change", draw_skewt);
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
 document.getElementById("show_isohumes").addEventListener("change", () =>
@@ -708,6 +780,29 @@ function get_surface_base()
              u_env, v_env, wind_speed };
 }
 
+// Environment the plume rises through: surface point followed by all levels above it.
+function get_parcel_env()
+{
+    const base = get_surface_base();
+    if (!base) return null;
+
+    // Index of the first pressure level strictly above the surface.
+    // p_pa_all is sorted descending (highest pressure first).
+    const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
+    const idx_above = p_pa_all.findIndex(pp => pp < base.p_sfc_pa);
+    if (idx_above === -1) return null;
+
+    // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+    const z_sfc_agl = 0;
+
+    return {
+        p_env:  [base.p_sfc_pa,   ...p_pa_all.slice(idx_above)],
+        T_env:  [base.T_env_sfc,  ...model_sounding.T.slice(idx_above)],
+        Td_env: [base.Td_env_sfc, ...model_sounding.Td.slice(idx_above)],
+        z_env:  [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)],
+    };
+}
+
 // Surface base plus a parcel's fire excesses; u_vent is the wind's ventilation of the fire.
 function get_surface_state(parcel)
 {
@@ -718,17 +813,20 @@ function get_surface_state(parcel)
     return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0, u_vent };
 }
 
-// Material Icons flame, centred on x with its base at y.
+// Material Icons flame (24px viewBox), centred on x with its base at y. A path, not
+// the icon font, so it survives PNG export.
+const FIRE_PATH = "m12 12.9-2.13 2.09c-.56.56-.87 1.29-.87 2.07C9 18.68 10.35 20 12 20s3-1.32 3-2.94c0-.78-.31-1.52-.87-2.07L12 12.9z"
+    + "m4-6.9-.44.55C14.38 8.02 12 7.19 12 5.3V2S4 6 4 13c0 2.92 1.56 5.47 3.89 6.86-.56-.79-.89-1.76-.89-2.8 0-1.32.52-2.56 1.47-3.5L12 10.1l3.53 3.47c.95.93 1.47 2.17 1.47 3.5 0 1.02-.31 1.96-.85 2.75 1.89-1.15 3.29-3.06 3.71-5.3.66-3.55-1.07-6.9-3.86-8.52z";
+
 function draw_fire_icon(parent, x, y)
 {
-    parent.append("text")
-        .attr("x", x).attr("y", y)
-        .attr("text-anchor", "middle")
-        .style("font-family", "Material Icons").style("font-size", `${FIRE_ICON}px`)
+    const k = FIRE_ICON / 24;
+    parent.append("path")
+        .attr("d", FIRE_PATH)
+        .attr("transform", `translate(${x - FIRE_ICON / 2},${y - FIRE_ICON}) scale(${k})`)
         .attr("fill", "#333")
-        .attr("stroke", "white").attr("stroke-width", 2.5)
-        .style("paint-order", "stroke fill")
-        .text("local_fire_department");
+        .attr("stroke", "white").attr("stroke-width", 2.5 / k)
+        .style("paint-order", "stroke fill");
 }
 
 // North-up top view centred on the fire: plume footprints and tracks over the whole
@@ -754,7 +852,8 @@ function draw_plan_inset(parent, live, ix, iy, s_range, hx, hy)
     live.forEach(({ parcel, result, is_active }) =>
     {
         const K     = result.k_top;
-        const kl    = result.k_lcl > 0 ? result.k_lcl : K + 1;
+        // With full ascent, cloud base can lie above where the plume stopped.
+        const kl    = result.k_lcl > 0 && result.k_lcl < K ? result.k_lcl : K + 1;
         const discs = d3.range(K + 1).map(k =>
         {
             const a = result.area[k];
@@ -966,13 +1065,12 @@ function draw_plan_panel(panel, W_plan, entries)
         .text("km");
 }
 
-
 function draw_skewt()
 {
     svg.selectAll("*").remove();
 
     // The sounding (time, surface T/Td, wind) sets the flux each dθ, dq carries, so refresh the labels.
-    sync_flux_controls();
+    sync_fire_controls();
 
     const show_model = document.getElementById("show_model_sounding").checked;
 
@@ -1132,25 +1230,12 @@ function draw_skewt()
             .attr("fill", "#666")
             .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
 
-        const p_pa_all = model_sounding.p_hpa.map(p => p * 100);
-
         function run_parcel(parcel)
         {
             const surf = get_surface_state(parcel);
-
-            // Index of the first pressure level strictly above the surface.
-            // p_pa_all is sorted descending (highest pressure first).
-            const idx_above = p_pa_all.findIndex(pp => pp < surf.p_sfc_pa);
-            if (idx_above === -1) return null;
-
-            // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
-            const z_sfc_agl = 0;
-
-            // Environment: surface point followed by all levels above the surface.
-            const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
-            const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
-            const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
-            const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+            const env  = get_parcel_env();
+            if (!env) return null;
+            const { z_env, T_env, Td_env, p_env } = env;
 
             // "Non-entraining" is the entraining plume with entrainment switched off: the
             // parcel then just conserves its initial thetal/qt with height (classic parcel
@@ -1334,49 +1419,45 @@ function draw_skewt()
 
         const edit_parcel = active_parcel();
 
-        if (!document.getElementById("edit_mode").checked && edit_parcel)
+        if (!document.getElementById("edit_mode").checked && edit_parcel && get_parcel_env())
         {
-            const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
+            // The plume starts at H0, so the handles sit on the environment there.
+            const env   = get_parcel_env();
+            const p_h0  = interp([H0_PLUME], env.z_env, env.p_env)[0];
+            const T_h0  = interp([H0_PLUME], env.z_env, env.T_env)[0];
+            const qt_h0 = qsat(interp([H0_PLUME], env.z_env, env.Td_env)[0], p_h0);
+            const ex_h0 = exner(p_h0);
 
-            const surf0  = get_surface_state(edit_parcel);
-            const T_marker_val  = () => {
-                const s = get_surface_state(edit_parcel);
-                return s.T_env_sfc + s.dtheta * s.exner_sfc;
-            };
-            const Td_marker_val = () => {
-                const s = get_surface_state(edit_parcel);
-                return dewpoint(s.qt_sfc + s.dq, s.p_sfc_pa);
-            };
+            const T_marker_val  = () => T_h0 + edit_parcel.dtheta * ex_h0;
+            const Td_marker_val = () => dewpoint(qt_h0 + edit_parcel.dq, p_h0);
 
-            const y_sfc  = y(sfc_p_hpa_marker);
             const handle = (cx) => chart.append("circle")
-                .attr("cx", cx).attr("cy", y_sfc)
+                .attr("cx", cx).attr("cy", y(p_h0 / 100))
                 .attr("r", 5)
                 .attr("fill", "white")
                 .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
                 .style("cursor", "grab");
 
-            const T_node  = handle(x(skew_transform(surf0.T_env_sfc + surf0.dtheta * surf0.exner_sfc, sfc_p_hpa_marker)));
-            const Td_node = handle(x(skew_transform(dewpoint(surf0.qt_sfc + surf0.dq, surf0.p_sfc_pa), sfc_p_hpa_marker)));
+            const T_node  = handle(x(skew_transform(T_marker_val(),  p_h0 / 100)));
+            const Td_node = handle(x(skew_transform(Td_marker_val(), p_h0 / 100)));
 
             const reposition_markers = () =>
             {
-                T_node.attr("cx",  x(skew_transform(T_marker_val(),  sfc_p_hpa_marker)));
-                Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
+                T_node.attr("cx",  x(skew_transform(T_marker_val(),  p_h0 / 100)));
+                Td_node.attr("cx", x(skew_transform(Td_marker_val(), p_h0 / 100)));
             };
 
             const make_drag = (axis) => d3.drag()
                 .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
                 .on("drag", function (event)
                 {
-                    const s = get_surface_state(edit_parcel);
-                    const val_new = inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker);
+                    const val_new = inv_skew_transform(x.invert(event.x), p_h0 / 100);
                     if (axis === "T")
-                        edit_parcel.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
+                        edit_parcel.dtheta = Math.max(0, (val_new - T_h0) / ex_h0);
                     else
-                        edit_parcel.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
-                    sync_flux_controls();
+                        edit_parcel.dq = Math.max(0, qsat(val_new, p_h0) - qt_h0);
+                    sync_fire_controls();
                     reposition_markers();
                     redraw_all_parcels();
                 })
@@ -1637,14 +1718,39 @@ document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListene
 
 document.getElementById("download_btn").addEventListener("click", () =>
 {
-    const node = document.querySelector(".plot");
-    domtoimage.toPng(node).then(data_url =>
+    // SVG → canvas → PNG; inherited styles go on the clone's root.
+    const node  = svg.node();
+    const style = getComputedStyle(node);
+    // Crop to the laid-out height: CSS stretches the SVG down with long sidebars.
+    const width  = node.clientWidth;
+    const height = Math.min(+node.getAttribute("height"), node.clientHeight);
+    const clone = node.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", width);
+    clone.setAttribute("height", height);
+    clone.style.fontFamily = style.fontFamily;
+    clone.style.fontSize   = style.fontSize;
+    clone.style.color      = style.color;
+
+    const img = new Image();
+    img.onload = () =>
     {
+        const scale  = 2;
+        const canvas = document.createElement("canvas");
+        canvas.width  = width * scale;
+        canvas.height = height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.fillStyle = getComputedStyle(node.closest(".plot")).backgroundColor;
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0);
+
         const a = document.createElement("a");
         a.download = "skewt.png";
-        a.href = data_url;
+        a.href = canvas.toDataURL("image/png");
         a.click();
-    });
+    };
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone));
 });
 
 render_parcel_list();

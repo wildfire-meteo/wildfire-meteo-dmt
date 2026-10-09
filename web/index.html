@@ -27,7 +27,6 @@
         <link rel="stylesheet" href="style.css">
         <script src="https://d3js.org/d3.v7.min.js"></script>
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
     </head>
 
     <body>
@@ -165,17 +164,39 @@
                                 </select>
                             </label>
                             <label>
-                                <span id="fire_area_label">Fire area: 1.0 km²</span>
-                                <input type="range" id="fire_area" min="3" max="7" step="0.1" value="6">
+                                <span id="fire_fli_label">Fire line intensity: none</span>
+                                <input type="range" id="fire_fli" min="1.9" max="5" step="0.02" value="1.9">
                             </label>
                             <label>
-                                <span id="fire_H_label">Sensible heat flux: 0 kW/m²</span>
-                                <input type="range" id="fire_H" min="0" max="250" step="0.5" value="0">
+                                <span id="fire_width_label">Fire front width: 1 km</span>
+                                <input type="range" id="fire_width" min="1" max="4.7" step="0.02" value="3">
                             </label>
+                            <label>
+                                <span id="fire_depth_label">Fire front depth: 15 m</span>
+                                <input type="range" id="fire_depth" min="0" max="2.7" step="0.02" value="1.18">
+                            </label>
+                            <span id="fire_model_note" class="sidebar-note"></span>
                             <label>
                                 <span id="fire_LE_label">Latent heat flux: 0 kW/m²</span>
                                 <input type="range" id="fire_LE" min="0" max="50" step="0.5" value="0">
                             </label>
+                        </div>
+
+                        <button id="sens_toggle_btn" style="display:none">
+                            <span class="material-icons">stacked_line_chart</span> Plume sensitivity
+                            <span class="material-icons" id="sens_toggle_icon">expand_more</span>
+                        </button>
+                        <div id="sens_options" class="section-body" style="display:none; padding: 0;">
+                            <label>
+                                Quantity
+                                <select id="sens_quantity">
+                                    <option value="top">Plume top height</option>
+                                    <option value="w_max">Max. vertical velocity</option>
+                                </select>
+                            </label>
+                            <button id="sens_download_btn">
+                                <span class="material-icons">download</span> Save PNG
+                            </button>
                         </div>
                     </div>
                 </details>

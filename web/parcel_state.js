@@ -44,9 +44,10 @@ export function make_parcel(existing, source = null)
         name:         `Parcel ${n}`,
         color,
         mode:         source?.mode      ?? "non_entraining",
-        fire_area:    source?.fire_area ?? 6,
-        dtheta:       source?.dtheta    ?? 0,
-        dq:           source?.dq        ?? 0,
+        fire_area:    source?.fire_area  ?? Math.log10(1.5e4),
+        fire_depth:   source?.fire_depth ?? Math.log10(15),
+        dtheta:       source?.dtheta     ?? 0,
+        dq:           source?.dq         ?? 0,
         visible:      true,
     };
 }
