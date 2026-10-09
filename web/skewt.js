@@ -14,10 +14,12 @@
 // limitations under the License.
 //
 
-import { calc_non_entraining_parcel, calc_entraining_parcel } from "./parcel.js";
+import { calc_parcel_ascent, interp, H0_PLUME } from "./parcel.js";
+import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
 import { draw_wind_barb, STAFF_LEN } from "./wind_barbs.js";
+import { download_plume_sensitivity } from "./plume_sensitivity.js";
 
 const svg = d3.select("#skewt");
 
@@ -27,6 +29,8 @@ let current_zoom = d3.zoomIdentity;
 
 const zoom = d3.zoom()
     .scaleExtent([0.5, 10])
+    // Plain wheel scrolls the page; pinch (ctrlKey) or Ctrl/Cmd + wheel zooms.
+    .filter(event => event.type === "wheel" ? event.ctrlKey || event.metaKey : !event.ctrlKey && !event.button)
     .on("zoom", (event) => { current_zoom = event.transform; draw_skewt(); });
 
 svg.call(zoom);
@@ -39,12 +43,40 @@ let obs_sounding = null;
 let model_forecast = null;
 let current_time = 0;
 
-const fire_state = { dtheta: 0, dq: 0 };
+let parcels = [];
+
+// Slider value from before the strip capped the diagram top, restored when it closes.
+let p_top_saved = null;
+let active_parcel_id = null;
+
+function active_parcel()
+{
+    return parcels.find(p => p.id === active_parcel_id) ?? null;
+}
 
 const color_T     = "#EB0056";
 const color_Td    = "#0056EB";
-const color_w_sat = "#00A6FF";
 const font_size   = "14px";
+
+// Line weights and opacities. Parcels sit above the construction lines, but only the
+// one under edit is fully opaque, so it reads first without hiding the others.
+const LW_PROFILE     = 2.5;
+const LW_PARCEL      = 2.6;
+const LW_PARCEL_IDLE = 1.8;
+const OP_PARCEL      = 1.0;
+// Full opacity even when idle: the palette is a lightness ramp, so fading a parcel would
+// read as the next shade up rather than as de-emphasis. Weight carries the emphasis.
+const OP_PARCEL_IDLE = 1.0;
+
+// Parcels are dashed, to set them apart from the soundings and the construction. The
+// dashes are long enough not to read as a dotted line where a parcel runs close to the
+// isobars (4,3) or an observed sounding (6,3).
+const DASH_PARCEL = "12,5";
+
+// Cloud base and plume top rules. Drawn for the parcel under edit only, and kept light:
+// they are grid lines, not another parcel line to read.
+const LW_LEVEL = 1;
+const OP_LEVEL = 0.6;
 
 // Vertical velocity panel. Dropped when the main plot would fall below MIN_MAIN_W.
 const W_PANEL_W     = 100;
@@ -52,7 +84,26 @@ const W_PANEL_RIGHT = 30;
 const MIN_MAIN_W    = 320;
 
 // Coarse ladder for the w axis, so the domain stays stable while sliders are dragged.
-const W_AXIS_LADDER = [10, 20, 30, 50, 100];
+const W_AXIS_LADDER = [10, 20, 30, 50, 100, 150, 200];
+
+// Plume cross-section strip above the diagram, at a fixed true-aspect scale; big plumes run off it.
+const PLAN_H      = 170;
+const PLAN_Z_TOP  = 3000;  // m AGL at the top of the strip
+const PLAN_X0     = 0.12;  // fire position, as a fraction of the width
+const PLAN_GAP    = 46;    // the strip's own x axis, plus room for the diagram title
+const PLAN_P_TOP  = 200;   // hPa the diagram is capped at while the strip is open
+const MIN_MAIN_H  = 280;
+
+// Top-view inset in the strip's corner, at its own fixed scale.
+const INSET_PAD   = 6;
+const INSET_SIZE  = PLAN_H - 2 * INSET_PAD;
+const INSET_R     = 5000;   // m from the fire to the inset edge
+const FIRE_ICON   = 14;     // px
+
+// Plume fills: saturated part in the isohume blue.
+const CLOUD_COLOR   = "rgb(31,119,180)";
+const CLOUD_FILL_OP = 0.22;
+const PLUME_FILL_OP = 0.18;
 
 // Half-width (hPa) of the Gaussian kernel used by "Match profile" to smooth
 // the observed T/Td profile before interpolating onto the model's pressure
@@ -164,7 +215,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
             elevation:           data.elevation,
         };
 
-        document.getElementById("launch_parcel").disabled = false;
+        render_parcel_list();
         document.getElementById("show_model_sounding").checked = true;
         draw_skewt();
     })
@@ -207,70 +258,298 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     draw_skewt();
 });
 
-// Only the entraining plume has a w, so gate the panel on the mode.
-function sync_w_panel_control()
+function render_parcel_list()
 {
-    document.getElementById("show_w_panel").disabled =
-        !document.getElementById("launch_parcel").checked ||
-        document.getElementById("parcel_mode").value !== "entraining";
+    const list = document.getElementById("parcel_list");
+    list.innerHTML = "";
+
+    parcels.forEach(p =>
+    {
+        const row = document.createElement("div");
+        row.className = "parcel-row" + (p.id === active_parcel_id ? " active" : "")
+                                     + (p.visible ? "" : " hidden");
+
+        // The color key doubles as the visibility toggle: filled on the plot, hollow off it.
+        const vis = document.createElement("span");
+        vis.className = "parcel-vis";
+        vis.title = p.visible ? "Hide on plot" : "Show on plot";
+        vis.innerHTML = '<span class="parcel-swatch"></span>';
+        const swatch = vis.firstChild;
+        if (p.visible) swatch.style.background = p.color;
+        else           swatch.style.boxShadow  = `inset 0 0 0 2px ${p.color}`;
+        vis.addEventListener("click", (e) =>
+        {
+            e.stopPropagation();
+            p.visible = !p.visible;
+            render_parcel_list();
+            draw_skewt();
+        });
+
+        const name = document.createElement("span");
+        name.className = "parcel-name";
+        name.textContent = p.name;
+
+        row.append(vis, name);
+
+        // Only on the selected row, so a click on any other row just selects it.
+        if (p.id === active_parcel_id)
+        {
+            row.append(
+                row_icon("edit",   "Rename",         () => begin_rename(row, name, p)),
+                row_icon("delete", "Remove parcel",  () => remove_parcel(p.id)));
+        }
+        else row.addEventListener("click", () => select_parcel(p.id));
+
+        list.appendChild(row);
+    });
+
+    // A slot rather than a button: creating a parcel and selecting it are one gesture.
+    if (parcels.length < MAX_PARCELS)
+    {
+        const add = document.createElement("div");
+        add.className = "parcel-row add" + (model_sounding ? "" : " disabled");
+        add.id = "add_parcel_row";
+        add.innerHTML = '<span class="material-icons">add</span>';
+        add.append(parcels.length ? "Copy to new parcel" : "New parcel");
+        if (model_sounding) add.addEventListener("click", add_parcel);
+        else add.title = "Fetch model data first";
+        list.appendChild(add);
+    }
+
+    sync_panel_controls();
+    sync_sensitivity_control();
 }
 
-document.getElementById("launch_parcel").addEventListener("change", () =>
+function row_icon(glyph, title, on_click)
 {
-    sync_w_panel_control();
+    const icon = document.createElement("span");
+    icon.className = `parcel-icon material-icons ${glyph}`;
+    icon.title = title;
+    icon.textContent = glyph;
+    icon.addEventListener("click", (e) => { e.stopPropagation(); on_click(); });
+    return icon;
+}
+
+// Swaps the label for an input until the edit is committed, then puts the label back.
+function begin_rename(row, label, p)
+{
+    if (row.querySelector(".parcel-name-input")) return;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "parcel-name parcel-name-input";
+    input.value = p.name;
+
+    // Re-rendering detaches the input, firing blur in turn; isConnected drops that pass.
+    const commit = () =>
+    {
+        if (!input.isConnected) return;
+        p.name = input.value.trim() || p.name;
+        render_parcel_list();
+        draw_skewt();
+    };
+
+    input.addEventListener("keydown", (e) =>
+    {
+        if (e.key === "Enter") commit();
+        else if (e.key === "Escape") { input.value = p.name; commit(); }
+    });
+    input.addEventListener("blur", commit);
+
+    row.replaceChild(input, label);
+    input.focus();
+    input.select();
+}
+
+function add_parcel()
+{
+    if (!model_sounding || parcels.length >= MAX_PARCELS) return;
+
+    const p = make_parcel(parcels, active_parcel());
+    parcels.push(p);
+    render_parcel_list();
+    select_parcel(p.id);
+}
+
+function select_parcel(id)
+{
+    active_parcel_id = id;
+    render_parcel_list();
+    load_parcel_into_editor();
+    draw_skewt();
+}
+
+function remove_parcel(id)
+{
+    parcels = parcels.filter(p => p.id !== id);
+    if (active_parcel_id === id)
+        active_parcel_id = parcels.length ? parcels[0].id : null;
+    load_parcel_into_editor();
+    render_parcel_list();
+    draw_skewt();
+}
+
+function load_parcel_into_editor()
+{
+    const p = active_parcel();
+
+    document.getElementById("parcel_editor").style.display = p ? "" : "none";
+    if (!p) return;
+
+    document.getElementById("parcel_mode").value = p.mode;
+    sync_fire_controls();
+}
+
+function sync_panel_controls()
+{
+    document.getElementById("show_w_panel").disabled    = parcels.length === 0;
+    document.getElementById("show_plan_panel").disabled = parcels.length === 0;
+}
+
+// Only entraining plumes depend on fire area, so the plot is offered for those alone.
+function sync_sensitivity_control()
+{
+    const show = active_parcel()?.mode === "entraining";
+    document.getElementById("sens_toggle_btn").style.display = show ? "" : "none";
+    if (show) return;
+    document.getElementById("sens_options").style.display = "none";
+    document.getElementById("sens_toggle_icon").textContent = "expand_more";
+}
+
+document.getElementById("parcel_mode").addEventListener("change", (e) =>
+{
+    const p = active_parcel();
+    if (p) p.mode = e.target.value;
+    sync_sensitivity_control();
     draw_skewt();
 });
-document.getElementById("parcel_mode").addEventListener("change", () =>
-{
-    sync_w_panel_control();
-    draw_skewt();
-});
-// Toggling the panel changes W, so reset the pixel-space zoom (this redraws).
+// Toggling a panel changes the plot size, so reset the pixel-space zoom (this redraws).
 document.getElementById("show_w_panel").addEventListener("change", () =>
     zoom.transform(svg, d3.zoomIdentity));
-document.getElementById("fire_area").addEventListener("input", (e) =>
+document.getElementById("show_plan_panel").addEventListener("change", () =>
+    zoom.transform(svg, d3.zoomIdentity));
+// Firefighter inputs (log10): fire line intensity (kW/m), fire front width and depth (m).
+// The model sees H = (1 - RADIATIVE_HEAT_LOSS) · FLI / depth over A = depth · width.
+// Depth is stored, so dragging the surface T changes FLI at fixed depth and area.
+const RADIATIVE_HEAT_LOSS = 0.6;   // fraction of FLI radiated away rather than heating the air
+const LOG_FLI_MIN = 2;             // FLI slider positions below this mean no fire
+
+// Moves the fire to a new area and heat flux at fixed latent heat flux. Without a fire
+// (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
+function set_fire(p, fire_area, H)
 {
-    const area_km2 = 10 ** (+e.target.value - 6);
-    const decimals = area_km2 < 0.1 ? 3 : 1;
-    document.getElementById("fire_area_label").textContent =
-        `Fire area: ${area_km2.toFixed(decimals)} km²`;
+    const s_old = get_surface_state(p);
+    p.fire_area = fire_area;
+    const s = get_surface_state(p);
+    if (!s) return;
+    const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
+    p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    if (s_old.w0 > 0 && p.dtheta > 0)
+        p.dq = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+}
+
+function fire_H(p)
+{
+    const s = get_surface_state(p);
+    return s ? H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) : 0;
+}
+
+document.getElementById("fire_fli").addEventListener("input", (e) =>
+{
+    const p = active_parcel();
+    if (!p) return;
+    const log_fli = +e.target.value;
+    set_fire(p, p.fire_area, log_fli < LOG_FLI_MIN ? 0 : (1 - RADIATIVE_HEAT_LOSS) * 10 ** (log_fli + 3 - p.fire_depth));
+    sync_fire_controls();
     draw_skewt();
 });
-document.getElementById("fire_H").addEventListener("input", (e) =>
+document.getElementById("fire_width").addEventListener("input", (e) =>
 {
-    const base = get_surface_base();
-    if (base)
-        fire_state.dtheta = dtheta_from_H(+e.target.value * 1e3, base.rho_sfc, base.thetav_sfc);
-    sync_flux_controls();
+    const p = active_parcel();
+    if (!p) return;
+    set_fire(p, p.fire_depth + +e.target.value, fire_H(p));
+    sync_fire_controls();
+    draw_skewt();
+});
+// Deepening the front spreads the same intensity over a larger area at a lower flux.
+document.getElementById("fire_depth").addEventListener("input", (e) =>
+{
+    const p = active_parcel();
+    if (!p) return;
+    const HD    = fire_H(p) * 10 ** p.fire_depth;
+    const log_L = p.fire_area - p.fire_depth;
+    p.fire_depth = +e.target.value;
+    set_fire(p, p.fire_depth + log_L, HD / 10 ** p.fire_depth);
+    sync_fire_controls();
     draw_skewt();
 });
 document.getElementById("fire_LE").addEventListener("input", (e) =>
 {
-    const base = get_surface_base();
-    if (base)
-        fire_state.dq = dq_from_LE(+e.target.value * 1e3, fire_state.dtheta, base.rho_sfc, base.thetav_sfc);
-    sync_flux_controls();
+    const p = active_parcel();
+    const s = p && get_surface_state(p);
+    if (s)
+        p.dq = dq_from_LE(+e.target.value * 1e3, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    sync_fire_controls();
     draw_skewt();
 });
 
-function sync_flux_controls()
+function sync_fire_controls()
 {
-    const base = get_surface_base();
-    if (!base) return;
-    const H_kw  = H_from_dtheta(fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
-    const LE_kw = LE_from_dq(fire_state.dq, fire_state.dtheta, base.rho_sfc, base.thetav_sfc) / 1e3;
-    document.getElementById("fire_H").value  = H_kw;
-    document.getElementById("fire_LE").value = LE_kw;
-    update_flux_labels(H_kw, LE_kw);
-}
+    const p = active_parcel();
+    if (!p) return;
 
-function update_flux_labels(H_kw, LE_kw)
-{
-    document.getElementById("fire_H_label").textContent =
-        `Sensible heat flux: ${H_kw.toFixed(1)} kW/m²`;
-    document.getElementById("fire_LE_label").textContent =
-        `Latent heat flux: ${LE_kw.toFixed(1)} kW/m²`;
+    const depth = 10 ** p.fire_depth;
+    const L     = 10 ** (p.fire_area - p.fire_depth);
+    document.getElementById("fire_depth").value = p.fire_depth;
+    document.getElementById("fire_width").value = p.fire_area - p.fire_depth;
+    document.getElementById("fire_depth_label").textContent = `Fire front depth: ${d3.format(".2~r")(depth)} m`;
+    document.getElementById("fire_width_label").textContent = L < 1e3
+        ? `Fire front width: ${d3.format(".2~r")(L)} m`
+        : `Fire front width: ${d3.format(".2~r")(L / 1e3)} km`;
+
+    const s = get_surface_state(p);
+    if (!s) return;
+    const H   = H_from_dtheta(s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    const LE  = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    const fli = H * depth / (1 - RADIATIVE_HEAT_LOSS) / 1e3;
+    document.getElementById("fire_fli").value = fli > 0 ? Math.max(Math.log10(fli), LOG_FLI_MIN) : 0;
+    document.getElementById("fire_LE").value  = LE / 1e3;
+    document.getElementById("fire_fli_label").textContent = fli > 0
+        ? `Fire line intensity: ${d3.format(",.3~r")(fli)} kW/m`
+        : "Fire line intensity: none";
+    document.getElementById("fire_LE_label").textContent = `Latent heat flux: ${(LE / 1e3).toFixed(1)} kW/m²`;
+
+    document.getElementById("fire_model_note").innerHTML =
+        `Sensible heat flux: ${(H / 1e3).toFixed(1)} kW/m²<br>Fire area: ${d3.format(",.2~r")(10 ** p.fire_area / 1e4)} ha`;
 }
+document.getElementById("sens_toggle_btn").addEventListener("click", () =>
+{
+    const opts = document.getElementById("sens_options");
+    const open = opts.style.display === "none";
+    opts.style.display = open ? "" : "none";
+    document.getElementById("sens_toggle_icon").textContent = open ? "expand_less" : "expand_more";
+});
+document.getElementById("sens_download_btn").addEventListener("click", () =>
+{
+    const p    = active_parcel();
+    const s    = p && get_surface_state(p);
+    const env  = get_parcel_env();
+    if (!s || !env) return;
+
+    const LE_kw = LE_from_dq(s.dq, s.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent) / 1e3;
+
+    const model = document.getElementById("model_select").selectedOptions[0].text;
+    const lat   = document.getElementById("lat_input").value;
+    const lon   = document.getElementById("lon_input").value;
+    const date  = document.getElementById("date_input").value;
+    const time  = model_forecast?.times[current_time] ?? "";
+
+    download_plume_sensitivity({
+        env, base: s, LE_kw,
+        key:      document.getElementById("sens_quantity").value,
+        subtitle: `${model} · ${date} ${time} UTC · ${lat}, ${lon}`,
+    });
+});
 document.getElementById("show_isobars").addEventListener("change", draw_skewt);
 document.getElementById("show_isotherms").addEventListener("change", draw_skewt);
 document.getElementById("show_isohumes").addEventListener("change", () =>
@@ -281,6 +560,12 @@ document.getElementById("show_isohumes").addEventListener("change", () =>
 document.getElementById("label_isohumes").addEventListener("change", draw_skewt);
 document.getElementById("show_dry_adiabats").addEventListener("change", draw_skewt);
 document.getElementById("show_moist_adiabats").addEventListener("change", draw_skewt);
+document.getElementById("bg_line_opacity").addEventListener("input", (e) =>
+{
+    document.getElementById("bg_line_opacity_label").textContent =
+        `Line opacity: ${Math.round(+e.target.value * 100)}%`;
+    draw_skewt();
+});
 document.getElementById("show_model_sounding").addEventListener("change", draw_skewt);
 document.getElementById("edit_mode").addEventListener("change", draw_skewt);
 
@@ -292,6 +577,11 @@ document.getElementById("p_top").addEventListener("input", (e) =>
     draw_skewt();
 });
 
+function bg_rgba(rgb)
+{
+    return `rgba(${rgb},${document.getElementById("bg_line_opacity").value})`;
+}
+
 function draw_isobars(chart, y, W)
 {
     const p_levels = [1000, 900, 800, 700, 600, 500, 400, 300, 200, 100];
@@ -300,7 +590,7 @@ function draw_isobars(chart, y, W)
         chart.append("line")
             .attr("x1", 0).attr("y1", y(p))
             .attr("x2", W).attr("y2", y(p))
-            .attr("stroke", "rgba(179,179,179,0.5)")
+            .attr("stroke", bg_rgba("179,179,179"))
             .attr("stroke-width", 1)
             .attr("stroke-dasharray", "4,3");
     });
@@ -360,18 +650,21 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
             .attr("y", y_pos - 4)
             .attr("text-anchor", "middle")
             .attr("font-size", "12px")
-            .attr("fill", "rgba(31,119,180,0.9)")
+            .attr("fill", bg_rgba("31,119,180"))
             .text(mixing_ratios[i].toFixed(1));
     });
 }
 
 // Dynamic content of the w panel, redrawn on every drag tick. Shares y with the
-// main plot; the frame is drawn once per draw_skewt.
-function draw_w_panel(panel, y, H, parcel)
+// main plot; the frame is drawn once per draw_skewt. Entries come in draw order,
+// so the active parcel is last and ends up on top.
+function draw_w_panel(panel, y, H, entries)
 {
     const dyn = panel.append("g").attr("class", "w-panel-dyn");
 
-    if (parcel.w.length === 0)
+    const w_max_all = Math.max(0, ...entries.map(e => Math.max(0, ...e.result.w)));
+
+    if (w_max_all === 0)
     {
         ["Raise the sensible", "heat flux to", "launch a plume"].forEach((msg, i) =>
             dyn.append("text")
@@ -382,8 +675,7 @@ function draw_w_panel(panel, y, H, parcel)
         return;
     }
 
-    const w_max = Math.max(...parcel.w);
-    const w_top = W_AXIS_LADDER.find(v => v >= w_max) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
+    const w_top = W_AXIS_LADDER.find(v => v >= w_max_all) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
     const xw    = d3.scaleLinear().domain([0, w_top]).range([0, W_PANEL_W]);
     const ticks = [0, w_top / 2, w_top];
 
@@ -394,79 +686,67 @@ function draw_w_panel(panel, y, H, parcel)
             .attr("stroke", "rgba(179,179,179,0.5)")
             .attr("stroke-width", 1));
 
+    // Cloud base and plume top of the parcel under edit, continued from the sounding so
+    // the two panels read off the same levels.
+    const active = entries.find(e => e.is_active);
+    if (active)
+    {
+        const rules = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
+        const level_rule = (p_hpa) =>
+            rules.append("line")
+                .attr("x1", 0).attr("y1", y(p_hpa))
+                .attr("x2", W_PANEL_W).attr("y2", y(p_hpa))
+                .attr("stroke", active.parcel.color)
+                .attr("stroke-width", LW_LEVEL)
+                .attr("stroke-opacity", OP_LEVEL)
+                .attr("stroke-dasharray", "4,3");
+
+        if (active.result.k_lcl > 0)              level_rule(active.result.p[active.result.k_lcl] / 100);
+        if (active.result.stopped && active.result.k_top > 0) level_rule(active.result.p[active.result.k_top] / 100);
+    }
+
     const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
     const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
-    const pts  = parcel.w.map((w, i) => [w, parcel.p[i] / 100]);
 
-    // Split at condensation, so the saturated part of the plume reads as moist.
-    const k_cond = parcel.type.indexOf(1);
-    const segments = k_cond === -1
-        ? [[pts, "#000"]]
-        : [[pts.slice(0, k_cond + 1), "#000"], [pts.slice(k_cond), color_w_sat]];
-
-    segments.forEach(([seg, color]) =>
-        clip.append("path").datum(seg)
-            .attr("fill", "none")
-            .attr("stroke", color)
-            .attr("stroke-width", 2)
-            .attr("d", line));
-
-    const k_max = parcel.w.indexOf(w_max);
-    const x_max = xw(w_max);
-    const y_max = y(parcel.p[k_max] / 100);
-    const flip  = x_max > W_PANEL_W / 2;
-
-    clip.append("circle")
-        .attr("cx", x_max).attr("cy", y_max).attr("r", 3).attr("fill", "#000");
-    clip.append("text")
-        .attr("x", flip ? x_max - 6 : x_max + 6)
-        .attr("y", y_max - 6)
-        .attr("text-anchor", flip ? "end" : "start")
-        .attr("font-size", "11px").attr("fill", "#000")
-        .text(`${w_max.toFixed(1)} m/s`);
-
-    const p_top_plume = parcel.p[parcel.p.length - 1] / 100;
-    const z_top       = parcel.z[parcel.z.length - 1];
-
-    clip.append("line")
-        .attr("x1", 0).attr("y1", y(p_top_plume))
-        .attr("x2", W_PANEL_W).attr("y2", y(p_top_plume))
-        .attr("stroke", "#888")
-        .attr("stroke-width", 1)
-        .attr("stroke-dasharray", "2,3");
-    clip.append("text")
-        .attr("x", W_PANEL_W - 4).attr("y", y(p_top_plume) - 5)
-        .attr("text-anchor", "end")
-        .attr("font-size", "11px").attr("fill", "#666")
-        .text(`${(z_top / 1000).toFixed(1)} km`);
-
-    // Top of the buoyant layer; the plume coasts from here to its top.
-    const k_nb = parcel.buoy.findLastIndex(b => b >= 0);
-    if (k_nb > 0 && k_nb < parcel.buoy.length - 1)
+    entries.forEach(({ parcel, result, is_active }) =>
     {
-        const y_nb    = y(parcel.p[k_nb] / 100);
-        const nb_flip = xw(parcel.w[k_nb]) > W_PANEL_W / 2;
+        const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
+        const op = is_active ? OP_PARCEL : OP_PARCEL_IDLE;
 
-        clip.append("line")
-            .attr("x1", 0).attr("y1", y_nb)
-            .attr("x2", W_PANEL_W).attr("y2", y_nb)
-            .attr("stroke", "#888")
-            .attr("stroke-width", 1)
-            .attr("stroke-dasharray", "2,3");
-        // Shallow plumes stack all three annotations, so only label when it sits clear.
-        if (y_max - y_nb > 14 && y_nb - y(p_top_plume) > 14)
-            clip.append("text")
-                .attr("x", nb_flip ? 4 : W_PANEL_W - 4).attr("y", y_nb - 5)
-                .attr("text-anchor", nb_flip ? "start" : "end")
-                .attr("font-size", "11px").attr("fill", "#666")
-                .text("B = 0");
-    }
+        clip.append("path")
+            .datum(result.w.slice(0, result.k_top + 1).map((w, i) => [w, result.p[i] / 100]))
+            .attr("fill", "none")
+            .attr("stroke", parcel.color)
+            .attr("stroke-width", lw)
+            .attr("stroke-opacity", op)
+            .attr("stroke-dasharray", DASH_PARCEL)
+            .attr("d", line);
+
+        // w_max for the parcel in focus. Labelled but not marked, so a circle on the
+        // diagram only ever means a draggable surface value.
+        if (!is_active) return;
+
+        const w_max = Math.max(...result.w);
+        const x_max = xw(w_max);
+        const flip  = x_max > W_PANEL_W / 2;
+
+        clip.append("text")
+            .attr("x", flip ? x_max - 6 : x_max + 6)
+            .attr("y", y(result.p[result.w.indexOf(w_max)] / 100) + 4)
+            .attr("text-anchor", flip ? "end" : "start")
+            .attr("font-size", "11px").attr("fill", parcel.color)
+            // Halo, so the label stays readable where it crosses another parcel.
+            .attr("stroke", "white").attr("stroke-width", 3)
+            .style("paint-order", "stroke fill")
+            .text(`${w_max.toFixed(1)} m/s`);
+    });
 
     dyn.append("g")
         .attr("transform", `translate(0,${H})`)
         .call(d3.axisBottom(xw).tickValues(ticks))
         .selectAll("text").style("font-size", font_size);
 }
+
 
 // Returns surface thermodynamic base state from model_sounding, or null if unavailable.
 function get_surface_base()
@@ -486,12 +766,311 @@ function get_surface_base()
     const thetav_sfc = virtual_temp(theta_sfc, qt_sfc);
     const rho_sfc    = p_sfc_pa / (Rd * exner_sfc * thetav_sfc);
 
-    return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc };
+    // Wind components on the parcel environment's levels (surface point followed by all levels
+    // above it; wd is where the wind blows from). No 10 m wind yet, so repeat the lowest level.
+    const z_env = [0, ...model_sounding.z_agl.slice(fallback_idx)];
+    const has_wind = !!model_sounding.ws;
+    const u_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.sin(model_sounding.wd[i] * Math.PI / 180)) : null;
+    const v_lev = has_wind ? model_sounding.ws.map((ws, i) => -ws * Math.cos(model_sounding.wd[i] * Math.PI / 180)) : null;
+    const u_env = has_wind ? [u_lev[fallback_idx], ...u_lev.slice(fallback_idx)] : z_env.map(() => 0);
+    const v_env = has_wind ? [v_lev[fallback_idx], ...v_lev.slice(fallback_idx)] : z_env.map(() => 0);
+    const wind_speed = Math.hypot(interp([H0_PLUME], z_env, u_env)[0], interp([H0_PLUME], z_env, v_env)[0]);
+
+    return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc,
+             u_env, v_env, wind_speed };
+}
+
+// Environment the plume rises through: surface point followed by all levels above it.
+function get_parcel_env()
+{
+    const base = get_surface_base();
+    if (!base) return null;
+
+    // Index of the first pressure level strictly above the surface.
+    // p_pa_all is sorted descending (highest pressure first).
+    const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
+    const idx_above = p_pa_all.findIndex(pp => pp < base.p_sfc_pa);
+    if (idx_above === -1) return null;
+
+    // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
+    const z_sfc_agl = 0;
+
+    return {
+        p_env:  [base.p_sfc_pa,   ...p_pa_all.slice(idx_above)],
+        T_env:  [base.T_env_sfc,  ...model_sounding.T.slice(idx_above)],
+        Td_env: [base.Td_env_sfc, ...model_sounding.Td.slice(idx_above)],
+        z_env:  [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)],
+    };
+}
+
+// Surface base plus a parcel's fire excesses; u_vent is the wind's ventilation of the fire.
+function get_surface_state(parcel)
+{
+    const base = get_surface_base();
+    if (!base) return null;
+    const u_vent = base.wind_speed * H0_PLUME / Math.sqrt(10 ** parcel.fire_area);
+    const w0 = w0_from_dtheta(parcel.dtheta, base.thetav_sfc);
+    return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0, u_vent };
+}
+
+// Material Icons flame (24px viewBox), centred on x with its base at y. A path, not
+// the icon font, so it survives PNG export.
+const FIRE_PATH = "m12 12.9-2.13 2.09c-.56.56-.87 1.29-.87 2.07C9 18.68 10.35 20 12 20s3-1.32 3-2.94c0-.78-.31-1.52-.87-2.07L12 12.9z"
+    + "m4-6.9-.44.55C14.38 8.02 12 7.19 12 5.3V2S4 6 4 13c0 2.92 1.56 5.47 3.89 6.86-.56-.79-.89-1.76-.89-2.8 0-1.32.52-2.56 1.47-3.5L12 10.1l3.53 3.47c.95.93 1.47 2.17 1.47 3.5 0 1.02-.31 1.96-.85 2.75 1.89-1.15 3.29-3.06 3.71-5.3.66-3.55-1.07-6.9-3.86-8.52z";
+
+function draw_fire_icon(parent, x, y)
+{
+    const k = FIRE_ICON / 24;
+    parent.append("path")
+        .attr("d", FIRE_PATH)
+        .attr("transform", `translate(${x - FIRE_ICON / 2},${y - FIRE_ICON}) scale(${k})`)
+        .attr("fill", "#333")
+        .attr("stroke", "white").attr("stroke-width", 2.5 / k)
+        .style("paint-order", "stroke fill");
+}
+
+// North-up top view centred on the fire: plume footprints and tracks over the whole
+// ascent, and the section line A-A' over the strip's s range.
+function draw_plan_inset(parent, live, ix, iy, s_range, hx, hy)
+{
+    const inset = parent.append("g").attr("transform", `translate(${ix},${iy})`);
+
+    inset.append("rect")
+        .attr("width", INSET_SIZE).attr("height", INSET_SIZE)
+        .attr("fill", "white").attr("stroke", "#ccc");
+    inset.append("clipPath").attr("id", "plan-inset-clip")
+        .append("rect").attr("width", INSET_SIZE).attr("height", INSET_SIZE);
+
+    const c  = INSET_SIZE / 2;
+    const m  = (c - 4) / INSET_R;                        // pixels per metre
+    const px = (east, north) => [c + east * m, c - north * m];
+
+    const body = inset.append("g").attr("clip-path", "url(#plan-inset-clip)");
+
+    // Footprints as unions of per-level discs: each fill is one group at one opacity so
+    // overlaps do not darken, and a mask of outer minus inner discs gives the outline.
+    live.forEach(({ parcel, result, is_active }) =>
+    {
+        const K     = result.k_top;
+        // With full ascent, cloud base can lie above where the plume stopped.
+        const kl    = result.k_lcl > 0 && result.k_lcl < K ? result.k_lcl : K + 1;
+        const discs = d3.range(K + 1).map(k =>
+        {
+            const a = result.area[k];
+            return { at: px(result.x[k], result.y[k]), r: isFinite(a) && a > 0 ? Math.sqrt(a / Math.PI) * m : 0 };
+        });
+
+        // Discs plus the band between consecutive ones: at coarse dz, or where the plume
+        // narrows as it stalls, the discs alone are disjoint and read as a string of beads.
+        const shapes = (g, k0, k1, color, dr) =>
+        {
+            for (let k = k0; k <= k1; k++)
+                g.append("circle")
+                    .attr("cx", discs[k].at[0]).attr("cy", discs[k].at[1]).attr("r", discs[k].r + dr)
+                    .attr("fill", color);
+
+            for (let k = k0; k < k1; k++)
+            {
+                const [ax, ay] = discs[k].at, [bx, by] = discs[k+1].at;
+                const len = Math.hypot(bx - ax, by - ay);
+                if (len < 1e-9) continue;
+                const [nx, ny] = [-(by - ay) / len, (bx - ax) / len];
+                const ra = discs[k].r + dr, rb = discs[k+1].r + dr;
+                g.append("polygon")
+                    .attr("points", `${ax + ra*nx},${ay + ra*ny} ${bx + rb*nx},${by + rb*ny} ` +
+                                    `${bx - rb*nx},${by - rb*ny} ${ax - ra*nx},${ay - ra*ny}`)
+                    .attr("fill", color);
+            }
+        };
+
+        const fill = (k0, k1, color, op) =>
+            shapes(body.append("g").attr("opacity", op), k0, k1, color, 0);
+
+        fill(0, Math.max(0, kl - 1), parcel.color, PLUME_FILL_OP);
+        if (kl <= K) fill(Math.max(0, kl - 1), K, CLOUD_COLOR, CLOUD_FILL_OP);
+
+        const lw   = is_active ? 1.2 : 0.8;
+        const mask = body.append("mask").attr("id", `plan-inset-mask-${parcel.id}`);
+        shapes(mask, 0, K, "white", lw);
+        shapes(mask, 0, K, "black", 0);
+
+        body.append("rect")
+            .attr("width", INSET_SIZE).attr("height", INSET_SIZE)
+            .attr("fill", parcel.color).attr("opacity", 0.6)
+            .attr("mask", `url(#plan-inset-mask-${parcel.id})`);
+
+        // Centreline track.
+        body.append("path")
+            .attr("d", d3.line()(d3.range(K + 1).map(k => px(result.x[k], result.y[k]))))
+            .attr("fill", "none")
+            .attr("stroke", parcel.color)
+            .attr("stroke-width", is_active ? 1.5 : 1);
+    });
+
+    // Section line, kept inside the box so both end labels stay visible.
+    const edge = (c - 12) / Math.max(Math.abs(hx), Math.abs(hy)) / m;
+    const s_lo = Math.max(s_range[0], -edge);
+    const s_hi = Math.min(s_range[1],  edge);
+    const [x1, y1] = px(s_lo * hx, s_lo * hy);
+    const [x2, y2] = px(s_hi * hx, s_hi * hy);
+
+    const [bx, by] = px((s_hi - 7 / m) * hx, (s_hi - 7 / m) * hy);
+
+    inset.append("line")
+        .attr("x1", x1).attr("y1", y1).attr("x2", bx).attr("y2", by)
+        .attr("stroke", "#333").attr("stroke-width", 1).attr("stroke-dasharray", "4,3");
+    inset.append("polygon")
+        .attr("points", `${x2},${y2} ${bx + 3.5 * hy},${by + 3.5 * hx} ${bx - 3.5 * hy},${by - 3.5 * hx}`)
+        .attr("fill", "#333");
+
+    [[x1, y1, "A"], [x2, y2, "A′"]].forEach(([x, y, label]) =>
+        inset.append("text")
+            .attr("x", x + 9 * hy).attr("y", y + 9 * hx + 4)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "11px").attr("font-weight", 600).attr("fill", "#333")
+            .attr("stroke", "white").attr("stroke-width", 3)
+            .style("paint-order", "stroke fill")
+            .text(label));
+
+    draw_fire_icon(inset, c, c + FIRE_ICON / 2);
+
+    inset.append("text")
+        .attr("x", 5).attr("y", 12)
+        .attr("font-size", "10px").attr("fill", "#666")
+        .text("N ↑");
+
+    inset.append("text")
+        .attr("x", INSET_SIZE - 5).attr("y", INSET_SIZE - 5)
+        .attr("text-anchor", "end")
+        .attr("font-size", "10px").attr("fill", "#666")
+        .text(`↔ ${2 * INSET_R / 1000} km`);
+}
+
+// Plume silhouette in the vertical plane along s, the mean drift direction.
+function draw_plan_panel(panel, W_plan, entries)
+{
+    const dyn = panel.append("g").attr("class", "plan-panel-dyn");
+
+    dyn.append("rect")
+        .attr("width", W_plan).attr("height", PLAN_H)
+        .attr("fill", "white").attr("stroke", "#ccc");
+    dyn.append("clipPath").attr("id", "plan-panel-clip")
+        .append("rect").attr("width", W_plan).attr("height", PLAN_H);
+
+    const scale = PLAN_H / PLAN_Z_TOP;                       // pixels per metre
+    const x0    = PLAN_X0 * W_plan;                          // pixel of s = 0
+    const xs    = d3.scaleLinear().domain([-x0 / scale, (W_plan - x0) / scale]).range([0, W_plan]);
+    const yz    = d3.scaleLinear().domain([0, PLAN_Z_TOP]).range([PLAN_H, 0]);
+
+    const live = entries.filter(e => e.result.k_top > 0);
+
+    // s from the depth-averaged wind of the parcel under edit, shared by all parcels.
+    const ref = live.find(e => e.is_active) ?? live[0];
+    const su  = ref ? ref.result.u.slice(0, ref.result.k_top + 1).reduce((a, b) => a + b, 0) : 0;
+    const sv  = ref ? ref.result.v.slice(0, ref.result.k_top + 1).reduce((a, b) => a + b, 0) : 0;
+    const mag = Math.hypot(su, sv);
+    const hx  = mag > 1e-6 ? su / mag : 0;
+    const hy  = mag > 1e-6 ? sv / mag : 1;
+
+    const clip = dyn.append("g").attr("clip-path", "url(#plan-panel-clip)");
+
+    live.forEach(({ parcel, result, is_active }) =>
+    {
+        const K = result.k_top;
+
+        // Up one edge and back down the other, split at cloud base.
+        const envelope = (k0, k1, fill, fill_op) =>
+        {
+            const pts = [];
+            const edge = (k, sign) =>
+            {
+                const a = result.area[k];
+                const r = isFinite(a) && a > 0 ? Math.sqrt(a / Math.PI) : 0;
+                return [xs(result.x[k] * hx + result.y[k] * hy + sign * r), yz(result.z[k])];
+            };
+
+            for (let k = k0; k <= k1; k++) pts.push(edge(k,  1));
+            for (let k = k1; k >= k0; k--) pts.push(edge(k, -1));
+
+            clip.append("polygon")
+                .attr("points", pts.map(q => `${q[0]},${q[1]}`).join(" "))
+                .attr("fill", fill)
+                .attr("fill-opacity", fill_op)
+                .attr("stroke", parcel.color)
+                .attr("stroke-width", is_active ? 1.2 : 0.8)
+                .attr("stroke-opacity", 0.6);
+        };
+
+        const kl = result.k_lcl;
+        if (kl > 0 && kl < K)
+        {
+            envelope(0,  kl, parcel.color, PLUME_FILL_OP);
+            envelope(kl, K,  CLOUD_COLOR,  CLOUD_FILL_OP);
+        }
+        else
+        {
+            envelope(0, K, parcel.color, PLUME_FILL_OP);
+        }
+    });
+
+    if (live.length === 0)
+        dyn.append("text")
+            .attr("x", W_plan / 2).attr("y", PLAN_H / 2)
+            .attr("text-anchor", "middle")
+            .attr("font-size", "11px").attr("fill", "#888")
+            .text("Raise the sensible heat flux to launch a plume");
+
+    // Ground and fire.
+    dyn.append("line")
+        .attr("x1", 0).attr("y1", PLAN_H)
+        .attr("x2", W_plan).attr("y2", PLAN_H)
+        .attr("stroke", "#666").attr("stroke-width", 1.5);
+
+    draw_fire_icon(dyn, x0, PLAN_H);
+
+    // A and A' mark the ends of the section, as on the inset's section line.
+    if (live.length > 0)
+    {
+        [[0, "start", "A"], [W_plan, "end", "A\u2032"]].forEach(([x, anchor, label]) =>
+            dyn.append("text")
+                .attr("x", x).attr("y", -6)
+                .attr("text-anchor", anchor)
+                .attr("font-size", "12px").attr("font-weight", 600).attr("fill", "#333")
+                .text(label));
+
+        draw_plan_inset(dyn, live, W_plan - INSET_SIZE - INSET_PAD, INSET_PAD,
+                        [-x0 / scale, (W_plan - x0) / scale], hx, hy);
+    }
+
+    dyn.append("g")
+        .attr("transform", `translate(0,${PLAN_H})`)
+        .call(d3.axisBottom(xs).ticks(8).tickFormat(d => d / 1000))
+        .selectAll("text").style("font-size", font_size);
+
+    dyn.append("g")
+        .call(d3.axisLeft(yz).ticks(4).tickFormat(d => d / 1000))
+        .selectAll("text").style("font-size", font_size);
+
+    dyn.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -PLAN_H / 2).attr("y", -42)
+        .attr("text-anchor", "middle")
+        .style("font-size", font_size)
+        .text("Height AGL (km)");
+
+    dyn.append("text")
+        .attr("x", W_plan).attr("y", PLAN_H + 34)
+        .attr("text-anchor", "end")
+        .style("font-size", font_size).attr("fill", "#666")
+        .text("km");
 }
 
 function draw_skewt()
 {
     svg.selectAll("*").remove();
+
+    // The sounding (time, surface T/Td, wind) sets the flux each dθ, dq carries, so refresh the labels.
+    sync_fire_controls();
 
     const show_model = document.getElementById("show_model_sounding").checked;
 
@@ -516,16 +1095,49 @@ function draw_skewt()
         - (toolbarEl ? toolbarEl.offsetHeight : 0)
         - vPad;
     svg.attr("height", svgH);
-    const H = svgH - margin.top - margin.bottom;
+
+    const plan_panel_el     = document.getElementById("show_plan_panel");
+    const plan_panel_wanted = plan_panel_el.checked && !plan_panel_el.disabled && model_sounding && show_model;
+    const h_avail = svgH - margin.top - margin.bottom;
+
+    const plan_panel_on   = plan_panel_wanted && h_avail - PLAN_H - PLAN_GAP >= MIN_MAIN_H;
+    const plan_panel_used = plan_panel_on ? PLAN_H + PLAN_GAP : 0;
+
+    document.getElementById("plan_panel_note").style.display =
+        plan_panel_wanted && !plan_panel_on ? "" : "none";
+
+    // The strip takes its height from the diagram, so cap how high the diagram reaches
+    // while it is open: the levels given up are above any plume this tool is about.
+    const p_top_el = document.getElementById("p_top");
+
+    // Read before touching min: raising a range input's min clamps its value on the spot.
+    if (plan_panel_on && p_top_saved === null && +p_top_el.value < PLAN_P_TOP)
+        p_top_saved = p_top_el.value;
+
+    p_top_el.min = plan_panel_on ? PLAN_P_TOP : 100;
+
+    if (!plan_panel_on && p_top_saved !== null)
+    {
+        p_top_el.value = p_top_saved;
+        p_top_saved = null;
+    }
+    document.getElementById("p_top_label").textContent = `Top: ${p_top_el.value} hPa`;
+
+    const H = h_avail - plan_panel_used;
 
     if (W <= 0 || H <= 0) return;
 
     const x_mode = document.getElementById("x_axis_mode").value;
     const x = current_zoom.rescaleX(d3.scaleLinear().domain(x_limits[x_mode]).range([0, W]));
-    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, +document.getElementById("p_top").value]).range([H, 0]));
+    const p_top = +p_top_el.value;
+    const y = current_zoom.rescaleY(d3.scaleLog().domain([1050, p_top]).range([H, 0]));
+
+    const plan_panel = plan_panel_on
+        ? svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`)
+        : null;
 
     const g = svg.append("g")
-        .attr("transform", `translate(${margin.left},${margin.top})`);
+        .attr("transform", `translate(${margin.left},${margin.top + plan_panel_used})`);
 
     g.append("rect")
         .attr("width", W).attr("height", H)
@@ -540,23 +1152,25 @@ function draw_skewt()
     if (document.getElementById("show_isobars").checked)
         draw_isobars(chart, y, W);
 
-    if (model_sounding && show_model && model_sounding.z)
-        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z, model_sounding.surface_pressure_hpa);
+    // Heights above ground level, to match the parcel levels and the plume model, which
+    // both measure from the surface rather than from sea level.
+    if (model_sounding && show_model && model_sounding.z_agl)
+        draw_height_labels(chart, y, model_sounding.p_hpa, model_sounding.z_agl, model_sounding.surface_pressure_hpa);
 
     if (bg_data)
     {
         if (document.getElementById("show_isotherms").checked)
-            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, "rgba(148,103,189,0.5)", true);
+            draw_skewt_lines(chart, x, y, bg_data.isotherms,      bg_data.p_isotherms, bg_rgba("148,103,189"), true);
         if (document.getElementById("show_isohumes").checked)
         {
-            draw_skewt_lines(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, "rgba(31,119,180,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, bg_rgba("31,119,180"));
             if (document.getElementById("label_isohumes").checked)
                 draw_isohume_labels(chart, x, y, bg_data.isohumes, bg_data.p_isohumes, bg_data.isohume_mixing_ratios);
         }
         if (document.getElementById("show_dry_adiabats").checked)
-            draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       "rgba(214,39,40,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.dry_adiabats,   bg_data.p_dry,       bg_rgba("214,39,40"));
         if (document.getElementById("show_moist_adiabats").checked)
-            draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     "rgba(13,145,70,0.5)");
+            draw_skewt_lines(chart, x, y, bg_data.moist_adiabats, bg_data.p_moist,     bg_rgba("13,145,70"));
     }
 
     // No vertical axis: y is shared, and margin.right keeps the barbs clear.
@@ -609,112 +1223,146 @@ function draw_skewt()
             .attr("stroke-width", 1.5)
             .attr("stroke-dasharray", "4,3");
         chart.append("text")
-            .attr("x", W - 4 - STAFF_LEN * Math.min(1, H / 600))
+            .attr("x", W - 4 - STAFF_LEN * Math.min(1, h_avail / 600))
             .attr("y", y(sfc_p_hpa) - 3)
             .attr("text-anchor", "end")
             .attr("font-size", "11px")
             .attr("fill", "#666")
             .text(`sfc: ${Math.round(sfc_p_hpa)} hPa`);
 
-        function redraw_parcel()
+        function run_parcel(parcel)
+        {
+            const surf = get_surface_state(parcel);
+            const env  = get_parcel_env();
+            if (!env) return null;
+            const { z_env, T_env, Td_env, p_env } = env;
+
+            // "Non-entraining" is the entraining plume with entrainment switched off: the
+            // parcel then just conserves its initial thetal/qt with height (classic parcel
+            // theory) while still accelerating under buoyancy alone. It needs a nominal
+            // non-zero w0 to seed the integration (buoyancy takes over from there), since
+            // w0 == 0 (no fire perturbation) would otherwise stall the ascent immediately.
+            // Its path is also carried on above the level where it stops, as the diagram is
+            // then the classic construction for reading LFC, EL, CAPE and CIN.
+            const w0_eps      = 1e-3;
+            const classic     = parcel.mode === "non_entraining";
+            // Classic parcel theory: no entrainment, and buoyancy fully accelerates w.
+            const no_ent      = classic ? { a_e: 0, b_e: 0, a_w: 1 } : {};
+            const w0          = classic ? Math.max(surf.w0, w0_eps) : surf.w0;
+
+            // The base area includes the air the wind vents downwind of the fire.
+            const fire_area = 10 ** parcel.fire_area;
+            const area      = surf.w0 > 0 ? fire_area * (surf.w0 + surf.u_vent) / surf.w0 : fire_area;
+
+            return calc_parcel_ascent(
+                z_env, T_env, Td_env, p_env, surf.u_env, surf.v_env,
+                surf.dtheta, surf.dq, w0, area, fire_area,
+                { ...no_ent, z_max: z_env[z_env.length - 1], full_ascent: classic },
+            );
+        }
+
+        function redraw_all_parcels()
         {
             chart.selectAll(".parcel-path").remove();
             if (w_panel) w_panel.selectAll(".w-panel-dyn").remove();
-
-            if (!document.getElementById("launch_parcel").checked) return;
+            if (plan_panel) plan_panel.selectAll(".plan-panel-dyn").remove();
 
             const parcel_line = d3.line()
                 .x(d => x(skew_transform(d[0], d[1])))
                 .y(d => y(d[1]));
 
-            const draw_parcel_segments = (segments) =>
-                segments.forEach(([p_arr, T_arr]) =>
-                {
-                    chart.append("path")
-                        .attr("class", "parcel-path")
-                        .datum(p_arr.map((p, i) => [T_arr[i], p / 100]))
-                        .attr("fill", "none")
-                        .attr("stroke", "#000")
-                        .attr("stroke-width", 2)
-                        .attr("stroke-dasharray", "6,3")
-                        .attr("d", parcel_line);
-                });
+            const parcel_path = (p_arr, T_arr, color, width, opacity) =>
+                chart.append("path")
+                    .attr("class", "parcel-path")
+                    .datum(p_arr.map((p, i) => [T_arr[i], p / 100]))
+                    .attr("fill", "none")
+                    .attr("stroke", color)
+                    .attr("stroke-width", width)
+                    .attr("stroke-opacity", opacity)
+                    .attr("stroke-dasharray", DASH_PARCEL)
+                    .attr("d", parcel_line);
 
-            const mode      = document.getElementById("parcel_mode").value;
-            const p_pa_all  = model_sounding.p_hpa.map(p => p * 100);
-            const surf      = get_surface_state();
+            // Cloud base and plume top as levels rather than markers: a dashed rule across
+            // the plot in the parcel's own color, annotated like the surface line. Labels
+            // are collected and placed after all parcels are drawn, so overlapping ones can
+            // be spread out without ending up out of height order.
+            const levels = [];
 
-            const T_s  = surf.T_env_sfc + surf.dtheta * surf.exner_sfc;
-            const Td_s = dewpoint(surf.qt_sfc + surf.dq, surf.p_sfc_pa);
-
-            // Index of the first pressure level strictly above the surface.
-            // p_pa_all is sorted descending (highest pressure first).
-            const idx_above = p_pa_all.findIndex(p => p < surf.p_sfc_pa);
-
-            if (mode === "non_entraining")
+            const parcel_level = (p_hpa, text, color) =>
             {
-                // Parcel grid: surface pressure + all levels above it.
-                const p_above = idx_above === -1 ? [] : p_pa_all.slice(idx_above);
-                const p_parcel = [surf.p_sfc_pa, ...p_above].sort((a, b) => b - a);
+                const y_lev = y(p_hpa);
+                levels.push({ y_lev, text, color });
 
-                const parcel = calc_non_entraining_parcel(T_s, Td_s, surf.p_sfc_pa, p_parcel);
+                chart.append("line")
+                    .attr("class", "parcel-path")
+                    .attr("x1", 0).attr("y1", y_lev)
+                    .attr("x2", W).attr("y2", y_lev)
+                    .attr("stroke", color)
+                    .attr("stroke-width", LW_LEVEL)
+                    .attr("stroke-opacity", OP_LEVEL)
+                    .attr("stroke-dasharray", "4,3");
+            };
 
-                draw_parcel_segments([
-                    [parcel.p_dry,     parcel.T_dry],
-                    [parcel.p_isohume, parcel.T_isohume],
-                    [parcel.p_moist,   parcel.T_moist],
-                ]);
-            }
-            else if (mode === "entraining")
+            const draw_level_labels = () =>
             {
-                if (idx_above === -1) return;
+                const label_x = W - 4 - STAFF_LEN * Math.min(1, h_avail / 600);
+                const row     = 13;
 
-                // z_agl is height above API grid-cell elevation, so its reference z_sfc_agl = 0.
-                const z_sfc_agl = 0;
+                // Spread from the top down, then lift the whole stack clear of the surface
+                // label, which is fixed: a plume that barely leaves the ground otherwise
+                // lands its label straight on top of it.
+                let y_prev = -Infinity;
+                const placed = levels.sort((a, b) => a.y_lev - b.y_lev)
+                    .map(l => ({ ...l, y_txt: (y_prev = Math.max(l.y_lev - 3, y_prev + row)) }));
 
-                // Environment: surface point followed by all levels above the surface.
-                const p_env  = [surf.p_sfc_pa,  ...p_pa_all.slice(idx_above)];
-                const T_env  = [surf.T_env_sfc, ...model_sounding.T.slice(idx_above)];
-                const Td_env = [surf.Td_env_sfc, ...model_sounding.Td.slice(idx_above)];
-                const z_env  = [0, ...model_sounding.z_agl.slice(idx_above).map(z => z - z_sfc_agl)];
+                const y_sfc_label = y(sfc_p_hpa) - 3;
+                const overlap = placed.length
+                    ? placed[placed.length - 1].y_txt - (y_sfc_label - row) : 0;
 
-                const area = 10 ** +document.getElementById("fire_area").value;
-
-                const parcel = calc_entraining_parcel(
-                    z_env, T_env, Td_env, p_env,
-                    surf.dtheta, surf.dq, surf.w0, area,
-                    { z_max: 12000 },
-                );
-
-                if (w_panel) draw_w_panel(w_panel, y, H, parcel);
-
-                if (parcel.p.length === 0) return;
-
-                // Plume top, tying the panel back to the sounding.
-                if (w_panel)
-                    chart.append("line")
+                placed.forEach(({ text, color, y_txt }) =>
+                    chart.append("text")
                         .attr("class", "parcel-path")
-                        .attr("x1", 0).attr("y1", y(parcel.p[parcel.p.length - 1] / 100))
-                        .attr("x2", W).attr("y2", y(parcel.p[parcel.p.length - 1] / 100))
-                        .attr("stroke", "#888")
-                        .attr("stroke-width", 1)
-                        .attr("stroke-dasharray", "2,3");
+                        .attr("x", label_x).attr("y", y_txt - Math.max(0, overlap))
+                        .attr("text-anchor", "end")
+                        .attr("font-size", "11px")
+                        .attr("fill", color)
+                        .text(text));
+            };
 
-                // T for the full ascent; Td only below LCL (where type == 0).
-                const lcl_idx = parcel.type.indexOf(1);
-                const n_sub   = lcl_idx === -1 ? parcel.p.length : lcl_idx + 1;
-                draw_parcel_segments([
-                    [parcel.p,                 parcel.T],
-                    [parcel.p.slice(0, n_sub), parcel.Td.slice(0, n_sub)],
-                ]);
-            }
-        }
+            // Active parcel last, so its line and labels end up on top of the others.
+            const drawn = parcels
+                .filter(p => p.visible)
+                .sort((a, b) => (a.id === active_parcel_id) - (b.id === active_parcel_id))
+                .map(p => ({ parcel: p, result: run_parcel(p), is_active: p.id === active_parcel_id }))
+                .filter(e => e.result && e.result.p.length);
 
-        function get_surface_state()
-        {
-            const base = get_surface_base();
-            const w0 = w0_from_dtheta(fire_state.dtheta, base.thetav_sfc);
-            return { ...base, dtheta: fire_state.dtheta, dq: fire_state.dq, w0 };
+            drawn.forEach(({ parcel, result, is_active }) =>
+            {
+                const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
+                const op = is_active ? OP_PARCEL : OP_PARCEL_IDLE;
+
+                // A non-entraining path continues above where the plume stops; the plume-top
+                // level, not a break in the line, is what says the plume got no further.
+                parcel_path(result.p, result.T, parcel.color, lw, op);
+                // Parcel Td only below the LCL, where it still differs from T.
+                const n_sub = result.k_lcl === -1 ? result.p.length : result.k_lcl + 1;
+                parcel_path(result.p.slice(0, n_sub), result.Td.slice(0, n_sub), parcel.color, lw, op);
+
+                // Levels for the parcel under edit only: three parcels' worth of rules and
+                // labels is a thicket, and the emphasised parcel is the one being read.
+                if (!is_active) return;
+
+                if (result.k_lcl > 0)
+                    parcel_level(result.p[result.k_lcl] / 100, `cloud base: ${Math.round(result.z[result.k_lcl])} m`, parcel.color);
+                // A plume top at the surface is no plume at all; the surface line says it.
+                if (result.stopped && result.k_top > 0)
+                    parcel_level(result.p[result.k_top] / 100, `plume top: ${Math.round(result.z[result.k_top])} m`, parcel.color);
+            });
+
+            draw_level_labels();
+
+            if (w_panel) draw_w_panel(w_panel, y, H, drawn);
+            if (plan_panel) draw_plan_panel(plan_panel, w_avail, drawn);
         }
 
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
@@ -722,7 +1370,7 @@ function draw_skewt()
             const path = chart.append("path").datum(pts)
                 .attr("fill", "none")
                 .attr("stroke", color)
-                .attr("stroke-width", 2.5)
+                .attr("stroke-width", LW_PROFILE)
                 .attr("d", line);
 
             const drag = d3.drag()
@@ -742,7 +1390,7 @@ function draw_skewt()
                     else if (on_surface_drag)
                         on_surface_drag(inv_skew_transform(d[0], d[1]));
 
-                    redraw_parcel();
+                    redraw_all_parcels();
                 })
                 .on("end", function ()
                 {
@@ -769,58 +1417,49 @@ function draw_skewt()
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T,  update_T_sfc);
         draw_skewt_profile(td_pts, color_Td, model_sounding.Td, update_Td_sfc);
 
-        if (!document.getElementById("edit_mode").checked &&
-             document.getElementById("launch_parcel").checked)
+        const edit_parcel = active_parcel();
+
+        if (!document.getElementById("edit_mode").checked && edit_parcel && get_parcel_env())
         {
-            const sfc_p_hpa_marker = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
+            // The plume starts at H0, so the handles sit on the environment there.
+            const env   = get_parcel_env();
+            const p_h0  = interp([H0_PLUME], env.z_env, env.p_env)[0];
+            const T_h0  = interp([H0_PLUME], env.z_env, env.T_env)[0];
+            const qt_h0 = qsat(interp([H0_PLUME], env.z_env, env.Td_env)[0], p_h0);
+            const ex_h0 = exner(p_h0);
 
-            const surf0  = get_surface_state();
-            const T_marker_val  = () => {
-                const s = get_surface_state();
-                return s.T_env_sfc + s.dtheta * s.exner_sfc;
-            };
-            const Td_marker_val = () => {
-                const s = get_surface_state();
-                return dewpoint(s.qt_sfc + s.dq, s.p_sfc_pa);
-            };
+            const T_marker_val  = () => T_h0 + edit_parcel.dtheta * ex_h0;
+            const Td_marker_val = () => dewpoint(qt_h0 + edit_parcel.dq, p_h0);
 
-            const T_node = chart.append("circle")
-                .attr("cx", x(skew_transform(surf0.T_env_sfc + surf0.dtheta * surf0.exner_sfc, sfc_p_hpa_marker)))
-                .attr("cy", y(sfc_p_hpa_marker))
+            const handle = (cx) => chart.append("circle")
+                .attr("cx", cx).attr("cy", y(p_h0 / 100))
                 .attr("r", 5)
                 .attr("fill", "white")
-                .attr("stroke", "#000")
+                .attr("stroke", edit_parcel.color)
                 .attr("stroke-width", 2)
                 .style("cursor", "grab");
 
-            const Td_node = chart.append("circle")
-                .attr("cx", x(skew_transform(dewpoint(surf0.qt_sfc + surf0.dq, surf0.p_sfc_pa), sfc_p_hpa_marker)))
-                .attr("cy", y(sfc_p_hpa_marker))
-                .attr("r", 5)
-                .attr("fill", "white")
-                .attr("stroke", "#000")
-                .attr("stroke-width", 2)
-                .style("cursor", "grab");
+            const T_node  = handle(x(skew_transform(T_marker_val(),  p_h0 / 100)));
+            const Td_node = handle(x(skew_transform(Td_marker_val(), p_h0 / 100)));
 
             const reposition_markers = () =>
             {
-                T_node.attr("cx",  x(skew_transform(T_marker_val(),  sfc_p_hpa_marker)));
-                Td_node.attr("cx", x(skew_transform(Td_marker_val(), sfc_p_hpa_marker)));
+                T_node.attr("cx",  x(skew_transform(T_marker_val(),  p_h0 / 100)));
+                Td_node.attr("cx", x(skew_transform(Td_marker_val(), p_h0 / 100)));
             };
 
             const make_drag = (axis) => d3.drag()
                 .on("start", function () { d3.select(this).style("cursor", "grabbing"); })
                 .on("drag", function (event)
                 {
-                    const s = get_surface_state();
-                    const val_new = inv_skew_transform(x.invert(event.x), sfc_p_hpa_marker);
+                    const val_new = inv_skew_transform(x.invert(event.x), p_h0 / 100);
                     if (axis === "T")
-                        fire_state.dtheta = Math.max(0, (val_new - s.T_env_sfc) / s.exner_sfc);
+                        edit_parcel.dtheta = Math.max(0, (val_new - T_h0) / ex_h0);
                     else
-                        fire_state.dq = Math.max(0, qsat(val_new, s.p_sfc_pa) - s.qt_sfc);
-                    sync_flux_controls();
+                        edit_parcel.dq = Math.max(0, qsat(val_new, p_h0) - qt_h0);
+                    sync_fire_controls();
                     reposition_markers();
-                    redraw_parcel();
+                    redraw_all_parcels();
                 })
                 .on("end", function () { d3.select(this).style("cursor", "grab"); draw_skewt(); });
 
@@ -828,7 +1467,7 @@ function draw_skewt()
             Td_node.call(make_drag("Td"));
         }
 
-        redraw_parcel();
+        redraw_all_parcels();
     }
 
     if (obs_sounding)
@@ -840,11 +1479,11 @@ function draw_skewt()
 
         chart.append("path").datum(t_pts)
             .attr("fill", "none").attr("stroke", color_T)
-            .attr("stroke-width", 2.5).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
 
         chart.append("path").datum(td_pts)
             .attr("fill", "none").attr("stroke", color_Td)
-            .attr("stroke-width", 2.5).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
     }
 
     if ((model_sounding && show_model) || obs_sounding)
@@ -861,8 +1500,12 @@ function draw_skewt()
             legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: "6,3" });
             legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
         }
-        if (model_sounding && show_model && document.getElementById("launch_parcel").checked)
-            legend_items.push({ label: "Parcel", color: "#000", dashes: "6,3" });
+        if (model_sounding && show_model && parcels.some(p => p.visible))
+        {
+            parcels.filter(p => p.visible).forEach(p =>
+                legend_items.push({ label: p.name, color: p.color, dashes: DASH_PARCEL,
+                                    active: p.id === active_parcel_id }));
+        }
 
         const line_len = 22;
         const row_h    = 22;
@@ -876,12 +1519,14 @@ function draw_skewt()
                 .attr("x1", 0).attr("x2", line_len)
                 .attr("y1", y_off + 6).attr("y2", y_off + 6)
                 .attr("stroke", item.color)
-                .attr("stroke-width", 2.5)
-                .attr("stroke-dasharray", item.dashes ?? null);
+                .attr("stroke-width", LW_PROFILE)
+                .attr("stroke-dasharray", item.dashes ?? null)
+                .attr("stroke-opacity", item.active === false ? OP_PARCEL_IDLE : 1);
             legend.append("text")
                 .attr("x", line_len + 6).attr("y", y_off + 10)
                 .attr("text-anchor", "start")
                 .style("font-size", font_size)
+                .style("font-weight", item.active ? 600 : 400)
                 .style("fill", "#333")
                 .text(item.label);
         });
@@ -890,14 +1535,20 @@ function draw_skewt()
     if (model_sounding && show_model && model_sounding.ws)
     {
         const ms_to_kts   = 1.94384;
-        const barb_scale  = Math.min(1, H / 600);
+        const barb_scale  = Math.min(1, h_avail / 600);
         const barb_sfc_p  = model_sounding.surface_pressure_hpa ?? Math.max(...model_sounding.p_hpa);
+
+        // Barbs sit outside the plot clip, but must not pan up over the strip.
+        g.append("clipPath").attr("id", "barb-clip")
+            .append("rect").attr("width", W + margin.right).attr("height", H + margin.bottom);
+        const barbs = g.append("g").attr("clip-path", "url(#barb-clip)");
+
         model_sounding.p_hpa.forEach((p, i) =>
         {
             if (p > barb_sfc_p) return;  // below surface, skip
             // In the 900–1000 hPa band keep only the 50 hPa grid (1000, 950, 900).
             if (p > 900 && p % 50 !== 0) return;
-            draw_wind_barb(g, W, y(p),
+            draw_wind_barb(barbs, W, y(p),
                 model_sounding.ws[i] * ms_to_kts,
                 model_sounding.wd[i],
                 "black",
@@ -905,9 +1556,15 @@ function draw_skewt()
         });
     }
 
-    g.append("g").call(d3.axisLeft(y)
-        .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100])
-        .tickFormat(d => d))
+    // Likewise for the pressure ticks.
+    g.append("clipPath").attr("id", "y-axis-clip")
+        .append("rect").attr("x", -margin.left).attr("y", -8)
+        .attr("width", margin.left).attr("height", H + margin.bottom + 8);
+
+    g.append("g").attr("clip-path", "url(#y-axis-clip)")
+        .call(d3.axisLeft(y)
+            .tickValues([1000, 900, 800, 700, 600, 500, 400, 300, 200, 100].filter(v => v >= p_top))
+            .tickFormat(d => d))
         .selectAll("text").style("font-size", font_size);
 
     g.append("g")
@@ -1061,16 +1718,42 @@ document.querySelectorAll(".remove_sounding_btn").forEach(b => b.addEventListene
 
 document.getElementById("download_btn").addEventListener("click", () =>
 {
-    const node = document.querySelector(".plot");
-    domtoimage.toPng(node).then(data_url =>
+    // SVG → canvas → PNG; inherited styles go on the clone's root.
+    const node  = svg.node();
+    const style = getComputedStyle(node);
+    // Crop to the laid-out height: CSS stretches the SVG down with long sidebars.
+    const width  = node.clientWidth;
+    const height = Math.min(+node.getAttribute("height"), node.clientHeight);
+    const clone = node.cloneNode(true);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", width);
+    clone.setAttribute("height", height);
+    clone.style.fontFamily = style.fontFamily;
+    clone.style.fontSize   = style.fontSize;
+    clone.style.color      = style.color;
+
+    const img = new Image();
+    img.onload = () =>
     {
+        const scale  = 2;
+        const canvas = document.createElement("canvas");
+        canvas.width  = width * scale;
+        canvas.height = height * scale;
+        const ctx = canvas.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.fillStyle = getComputedStyle(node.closest(".plot")).backgroundColor;
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0);
+
         const a = document.createElement("a");
         a.download = "skewt.png";
-        a.href = data_url;
+        a.href = canvas.toDataURL("image/png");
         a.click();
-    });
+    };
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(clone));
 });
 
+render_parcel_list();
 draw_skewt();
 
 window.addEventListener("resize", draw_skewt);

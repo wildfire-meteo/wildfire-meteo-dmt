@@ -27,7 +27,6 @@
         <link rel="stylesheet" href="style.css">
         <script src="https://d3js.org/d3.v7.min.js"></script>
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/dom-to-image/2.6.0/dom-to-image.min.js"></script>
     </head>
 
     <body>
@@ -140,20 +139,11 @@
             </div>
 
             <aside class="sidebar right">
-                <details class="section">
-                    <summary><span class="material-icons">switch_access_shortcut</span> Parcel control</summary>
+                <details class="section" open>
+                    <summary><span class="material-icons">switch_access_shortcut</span> Parcels</summary>
                     <div class="section-body">
-                        <label>
-                            Launch parcel
-                            <input type="checkbox" id="launch_parcel" disabled>
-                        </label>
-                        <label>
-                            Mode
-                            <select id="parcel_mode">
-                                <option value="non_entraining">Non-entraining</option>
-                                <option value="entraining">Entraining</option>
-                            </select>
-                        </label>
+                        <div id="parcel_list" class="parcel-list"></div>
+
                         <label>
                             <input type="checkbox" id="show_w_panel" disabled>
                             Vertical velocity panel
@@ -161,18 +151,58 @@
                         <span id="w_panel_note" class="sidebar-note" style="display:none">
                             Window too narrow for the vertical velocity panel.
                         </span>
+
                         <label>
-                            <span id="fire_area_label">Fire area: 1.0 km²</span>
-                            <input type="range" id="fire_area" min="3" max="7" step="0.1" value="6">
+                            <input type="checkbox" id="show_plan_panel" disabled>
+                            Plume cross-section
                         </label>
-                        <label>
-                            <span id="fire_H_label">Sensible heat flux: 0 kW/m²</span>
-                            <input type="range" id="fire_H" min="0" max="250" step="0.5" value="0">
-                        </label>
-                        <label>
-                            <span id="fire_LE_label">Latent heat flux: 0 kW/m²</span>
-                            <input type="range" id="fire_LE" min="0" max="50" step="0.5" value="0">
-                        </label>
+                        <span id="plan_panel_note" class="sidebar-note" style="display:none">
+                            Window too short for the plume cross-section.
+                        </span>
+
+                        <div id="parcel_editor" class="section-body" style="display:none; padding: 0;">
+                            <label>
+                                Mode
+                                <select id="parcel_mode">
+                                    <option value="non_entraining">Non-entraining</option>
+                                    <option value="entraining">Entraining</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span id="fire_fli_label">Fire line intensity: none</span>
+                                <input type="range" id="fire_fli" min="1.9" max="5" step="0.02" value="1.9">
+                            </label>
+                            <label>
+                                <span id="fire_width_label">Fire front width: 1 km</span>
+                                <input type="range" id="fire_width" min="1" max="4.7" step="0.02" value="3">
+                            </label>
+                            <label>
+                                <span id="fire_depth_label">Fire front depth: 15 m</span>
+                                <input type="range" id="fire_depth" min="0" max="2.7" step="0.02" value="1.18">
+                            </label>
+                            <span id="fire_model_note" class="sidebar-note"></span>
+                            <label>
+                                <span id="fire_LE_label">Latent heat flux: 0 kW/m²</span>
+                                <input type="range" id="fire_LE" min="0" max="50" step="0.5" value="0">
+                            </label>
+                        </div>
+
+                        <button id="sens_toggle_btn" style="display:none">
+                            <span class="material-icons">stacked_line_chart</span> Plume sensitivity
+                            <span class="material-icons" id="sens_toggle_icon">expand_more</span>
+                        </button>
+                        <div id="sens_options" class="section-body" style="display:none; padding: 0;">
+                            <label>
+                                Quantity
+                                <select id="sens_quantity">
+                                    <option value="top">Plume top height</option>
+                                    <option value="w_max">Max. vertical velocity</option>
+                                </select>
+                            </label>
+                            <button id="sens_download_btn">
+                                <span class="material-icons">download</span> Save PNG
+                            </button>
+                        </div>
                     </div>
                 </details>
 
@@ -250,6 +280,10 @@
                         <label>
                             <input type="checkbox" id="show_moist_adiabats" checked>
                             Moist adiabats <span style="color:#0D9146"><b>&mdash;&mdash;&mdash;</b></span>
+                        </label>
+                        <label>
+                            <span id="bg_line_opacity_label">Line opacity: 50%</span>
+                            <input type="range" id="bg_line_opacity" min="0" max="1" step="0.05" value="0.5">
                         </label>
                         <label>
                             x-axis

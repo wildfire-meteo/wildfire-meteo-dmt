@@ -106,7 +106,7 @@ def dewpoint(q, p):
         Dew-point temperature in Kelvin.
     """
     es  = esat_from_q(q, p)
-    lnr = np.log(np.maximum(np.finfo(float).tiny, es) / e0)
+    lnr = np.log(np.maximum(np.finfo(float).tiny, es / e0))
     Tc  = b * lnr / (a - lnr)
     return Tc + T0
 
@@ -298,6 +298,7 @@ def calc_moist_adiabat(T_start, p):
     """
     cA = np.array([0., -5./9., -153./128.])
     cB = np.array([1./3., 15./16., 8./15.])
+    cC = np.array([0., 1./3., 3./4.])  # Stage pressures; without them the scheme drops to first order.
 
     ktot = p.size
     T_out = np.empty((ktot, T_start.size))
@@ -309,7 +310,7 @@ def calc_moist_adiabat(T_start, p):
         Tt = 0.0
 
         for s in range(3):
-            Tt = cA[s] * Tt + dTdp(T, p[k-1])
+            Tt = cA[s] * Tt + dTdp(T, p[k-1] + cC[s] * dp)
             T = T + cB[s] * dp * Tt
 
         T_out[k, :] = T

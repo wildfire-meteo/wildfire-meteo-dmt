@@ -14,18 +14,21 @@
 // limitations under the License.
 //
 
-import { Rd, g, exner, qsat, dewpoint, calc_moist_adiabat, sat_adjust, virtual_temp } from "./thermo.js";
+import { Rd, g, exner, qsat, dewpoint, sat_adjust, virtual_temp } from "./thermo.js";
 
 
-export const A_W      = 1.0;
-export const B_W      = 0.2;
-export const FAC_ENT  = 1;  // Non-dimensional scaling of entrainment, from Eyken (2026)
+// Constants are fitted to dry LES plume cores (https://github.com/wildfire-meteo/plume-model).
+export const A_W      = 0.5;
+export const B_W      = 0.5;
+export const A_E      = 0.4; // Morton entrainment, scaled by the fire's size
+export const B_E      = 0.3; // Buoyancy-driven entrainment, largest near the base where w is small
 export const BETA     = 0.5; // The ratio fractional detrainment / fractional entrainment
-export const DZ_PLUME = 50;
+export const C_DET    = 2;   // Dynamic detrainment -C_DET/w dw/dz where w decreases; > 1 shrinks the area as w -> 0
+export const DZ_PLUME = 10;
 export const H0_PLUME = 20;
 
 
-function interp(x, xp, fp)
+export function interp(x, xp, fp)
 {
     // Linear interpolation of fp at positions x, given sample points xp (ascending).
     const n = xp.length;
@@ -69,69 +72,45 @@ export function find_lcl(T_sfc, Td_sfc, p_sfc, tol=5)
 }
 
 
-export function calc_non_entraining_parcel(T_sfc, Td_sfc, p_sfc, p)
-{
-    // p must be in Pa, sorted descending (surface to top).
-    const theta_sfc = T_sfc / exner(p_sfc);
-    const q_sfc     = qsat(Td_sfc, p_sfc);
-    const { p_lcl, T_lcl } = find_lcl(T_sfc, Td_sfc, p_sfc);
-
-    // Below LCL: isohume and dry adiabat.
-    const p_dry    = [...p.filter(pi => pi >= p_lcl), p_lcl];
-    const T_dry    = p_dry.map(pi => theta_sfc * exner(pi));
-    const T_isohume = p_dry.map(pi => dewpoint(q_sfc, pi));
-
-    // Above LCL: moist adiabat on a geomspace grid matching the background resolution.
-    const p_top    = Math.min(...p);
-    const log_step = Math.log(105000 / 10000) / (200 - 1);
-    const n_moist  = Math.round(Math.log(p_lcl / p_top) / log_step) + 1;
-    const p_moist  = Array.from({ length: n_moist }, (_, i) =>
-        Math.exp(Math.log(p_lcl) + i * (Math.log(p_top) - Math.log(p_lcl)) / (n_moist - 1)));
-    const T_moist = calc_moist_adiabat(T_lcl, p_moist);
-
-    return {
-        T_isohume,
-        p_isohume: p_dry,
-        T_dry,
-        p_dry,
-        T_moist,
-        p_moist,
-    };
-}
-
-
-export function calc_entraining_parcel(
-    z_env, T_env, Td_env, p_env,
-    dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s,
+export function calc_parcel_ascent(
+    z_env, T_env, Td_env, p_env, u_env, v_env,
+    dtheta_plume_s, dq_plume_s, w0_plume_s, area_plume_s, fire_area,
     {
         fire_multiplier = 1,
         a_w    = A_W,
         b_w    = B_W,
-        fac_ent = FAC_ENT,
+        a_e    = A_E,
+        b_e    = B_E,
         beta   = BETA,
+        c_det  = C_DET,
         dz     = DZ_PLUME,
         z_max  = 5000,
+        full_ascent = false,
     } = {})
 {
     const w_eps = 1e-6;
 
     if (w0_plume_s < w_eps)
         return {
-            T: [], T_pseudo: [], Tv: [], Td: [],
+            T: [], Tv: [], Td: [],
             theta: [], thetav: [], qt: [],
-            area: [], w: [], mass_flux: [],
+            area: [], w: [], buoy: [], mass_flux: [],
             entrainment: [], detrainment: [], type: [],
+            u: [], v: [], x: [], y: [],
             z: [], p: [],
+            k_top: -1, k_lcl: -1, stopped: false,
         };
 
-    // Build uniform height grid.
-    const n = Math.floor(z_max / dz);
-    const z = Array.from({ length: n }, (_, i) => i * dz);
+    // Build uniform height grid. The plume is initialised at H0, so it is the lowest point.
+    const n = Math.floor((z_max - H0_PLUME) / dz) + 1;
+    const z = Array.from({ length: n }, (_, i) => H0_PLUME + i * dz);
 
     // Interpolate environment to parcel grid, then derive thermodynamic variables.
     const T_e      = interp(z, z_env, T_env);
     const Td_e     = interp(z, z_env, Td_env);
     const p_e      = interp(z, z_env, p_env);
+    const u_e      = interp(z, z_env, u_env);
+    const v_e      = interp(z, z_env, v_env);
 
     const exner_e  = p_e.map(p => exner(p));
     const theta_e  = T_e.map((T, k) => T / exner_e[k]);
@@ -152,6 +131,10 @@ export function calc_entraining_parcel(
     const det_p    = new Array(n);
     const type_p   = new Array(n).fill(0);
     const buoy_p   = new Array(n);
+    const u_p      = new Array(n);
+    const v_p      = new Array(n);
+    const x_p      = new Array(n);
+    const y_p      = new Array(n);
 
     // Initial conditions. Fire perturbation is a dry heat excess (ql=0 at source),
     // so thetal_p == theta_p at the surface.
@@ -167,23 +150,43 @@ export function calc_entraining_parcel(
     w_p[0]      = w0_plume_s;
     mf_p[0]     = rho_e[0] * area_p[0] * w_p[0];
 
-    // Entrainment settings (Morton formulation).
-    const epsi = fac_ent / Math.sqrt(area_plume_s);
+    // Assume plume starts with environmental momentum at H0
+    u_p[0] = interp([H0_PLUME], z_env, u_env)[0];
+    v_p[0] = interp([H0_PLUME], z_env, v_env)[0];
+    x_p[0] = 0;
+    y_p[0] = 0;
+
+    // Morton entrainment, scaled by the fire rather than the vented base.
+    const epsi = a_e / Math.sqrt(fire_area);
     const delt = epsi * beta;
 
-    ent_p[0] = epsi * mf_p[0];
+    const eps_p = new Array(n);
+    eps_p[0] = epsi + b_e * Math.max(buoy_p[0], 0) / Math.max(w_p[0], w_eps)**2;
+    ent_p[0] = eps_p[0] * mf_p[0];
     det_p[0] = 0.0;
 
-    // Integrate upward.
+    // Integrate upward. With full_ascent the thermodynamic path is carried on above the
+    // level where the plume stops (k_top), giving the classic parcel construction.
     let i = 1;
+    let k_top = -1;
+    let stopped = false;
     for (; i < n; i++)
     {
-        mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - det_p[i-1]) * dz;
+        // Constant-fraction detrainment only; the dynamic part is applied once w_p[i] is known.
+        mf_p[i]     = mf_p[i-1] + (ent_p[i-1] - delt * mf_p[i-1]) * dz;
         // TODO: use thetal_e here instead of theta_e. Currently theta_e == thetal_e only
         // because the environment is assumed unsaturated (ql_e = 0). If the environment
         // is saturated, entrained air carries condensate and theta_e > thetal_e.
         thetal_p[i] = thetal_p[i-1] - ent_p[i-1] * (thetal_p[i-1] - theta_e[i-1]) / mf_p[i-1] * dz;
         qt_p[i]     = qt_p[i-1]     - ent_p[i-1] * (qt_p[i-1]     - qt_e[i-1])    / mf_p[i-1] * dz;
+
+        // Horizontal momentum, frozen with w_p once the plume has stopped.
+        const alive = k_top === -1;
+        u_p[i] = alive ? u_p[i-1] - ent_p[i-1] * (u_p[i-1] - u_e[i-1]) / mf_p[i-1] * dz : u_p[i-1];
+        v_p[i] = alive ? v_p[i-1] - ent_p[i-1] * (v_p[i-1] - v_e[i-1]) / mf_p[i-1] * dz : v_p[i-1];
+
+        x_p[i] = alive ? x_p[i-1] + u_p[i-1] / w_p[i-1] * dz : x_p[i-1];
+        y_p[i] = alive ? y_p[i-1] + v_p[i-1] / w_p[i-1] * dz : y_p[i-1];
 
         ({ T, ql, qi } = sat_adjust(thetal_p[i], qt_p[i], p_e[i]));
 
@@ -198,18 +201,31 @@ export function calc_entraining_parcel(
         if (ql > 0 || qi > 0)
             type_p[i] = 1;
 
-        buoy_p[i]  = g / thetav_e[i] * (thetav_p[i] - thetav_e[i]);
-        const w2   = w_p[i-1]**2 + 2 * (a_w * buoy_p[i] - b_w * epsi * w_p[i-1]**2) * dz;
-        w_p[i]     = Math.sqrt(Math.max(0, w2));
+        buoy_p[i] = g / thetav_e[i] * (thetav_p[i] - thetav_e[i]);
 
-        ent_p[i] = epsi * mf_p[i];
-        det_p[i] = delt * mf_p[i];
+        // Once stopped the parcel stays stopped; only its thermodynamic path continues.
+        const w2  = w_p[i-1]**2 + 2 * (a_w * buoy_p[i] - b_w * eps_p[i-1] * w_p[i-1]**2) * dz;
+        w_p[i]    = k_top === -1 ? Math.sqrt(Math.max(0, w2)) : 0;
 
-        area_p[i] = mf_p[i] / (rho_e[i] * (w_p[i] + w_eps));
+        // Dynamic detrainment, integrated exactly over the step: M scales by (w_i / w_{i-1})^c_det.
+        const decel = k_top === -1 && w_p[i] >= w_eps && w_p[i] < w_p[i-1];
+        const delt_dyn = decel ? -c_det * Math.log(w_p[i] / w_p[i-1]) / dz : 0;
+        mf_p[i] *= Math.exp(-delt_dyn * dz);
 
-        if (area_p[i] <= 0 || w_p[i] < w_eps)
-            break;
+        eps_p[i] = epsi + b_e * Math.max(buoy_p[i], 0) / Math.max(w_p[i], w_eps)**2;
+        ent_p[i] = eps_p[i] * mf_p[i];
+        det_p[i] = (delt + delt_dyn) * mf_p[i];
+
+        area_p[i] = w_p[i] > w_eps ? mf_p[i] / (rho_e[i] * w_p[i]) : NaN;
+
+        if (w_p[i] < w_eps || mf_p[i] <= 0)
+        {
+            if (k_top === -1) { k_top = i - 1; stopped = true; }
+            if (!full_ascent) break;
+        }
     }
+
+    if (k_top === -1) k_top = i - 1;
 
     // Slice results to active portion and compute derived quantities.
     const sl     = arr => arr.slice(0, i);
@@ -220,15 +236,11 @@ export function calc_entraining_parcel(
     // Cap Td at T: above LCL the parcel is saturated so Td == T.
     const Td_out = qt_out.map((q, k) => Math.min(dewpoint(q, p_out[k]), T_out[k]));
 
-    // Post-process: pseudoadiabatic T above LCL so the line follows background theta_e lines.
-    const lcl_k     = Array.from(type_p.slice(0, i)).indexOf(1);
-    const T_pseudo  = lcl_k === -1
-        ? T_out.slice()
-        : [...T_out.slice(0, lcl_k), ...calc_moist_adiabat(T_out[lcl_k], p_out.slice(lcl_k))];
+    const type_out = Array.from(type_p.slice(0, i));
+    const k_lcl    = type_out.indexOf(1);
 
     return {
         T:           T_out,
-        T_pseudo:    T_pseudo,
         Tv:          sl(Tv_p),
         Td:          Td_out,
         thetal:      sl(thetal_p),
@@ -237,11 +249,16 @@ export function calc_entraining_parcel(
         area:        sl(area_p),
         w:           sl(w_p),
         buoy:        sl(buoy_p),
+        u:           sl(u_p),
+        v:           sl(v_p),
+        x:           sl(x_p),
+        y:           sl(y_p),
         mass_flux:   sl(mf_p),
         entrainment: sl(ent_p),
         detrainment: sl(det_p),
-        type:        Array.from(type_p.slice(0, i)),
+        type:        type_out,
         z:           z_out,
         p:           p_out,
+        k_top, k_lcl, stopped,
     };
 }
