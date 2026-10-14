@@ -205,10 +205,11 @@ document.getElementById("time_input").addEventListener("input", reset_case_selec
 document.getElementById("case_select").addEventListener("change", (e) =>
 {
     if (!e.target.value) return;
-    const [, date, lat, lon] = e.target.value.split("|");
+    const [, date, lat, lon, time] = e.target.value.split("|");
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
     document.getElementById("date_input").value = date;
+    if (time) document.getElementById("time_input").value = time;
     fetch_nearest_stations();
 });
 
