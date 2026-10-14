@@ -62,6 +62,21 @@ function set_latlon_spinner(show)
     document.querySelectorAll(".latlon-spinner").forEach(el => el.style.display = show ? "" : "none");
 }
 
+// Geolocation requests can't be aborted; bumping this ID makes pending callbacks ignore their result.
+let _geo_request_id = 0;
+let _geo_pending = false;
+let _geo_fetch_after = false;
+
+function cancel_pending_geolocation()
+{
+    if (!_geo_pending) return;
+    _geo_request_id++;
+    _geo_pending = false;
+    set_latlon_spinner(false);
+    if (_geo_fetch_after)
+        document.getElementById("plot_spinner").style.display = "none";
+}
+
 function here_and_now(fetch_after = false)
 {
     if (fetch_after)
@@ -71,9 +86,15 @@ function here_and_now(fetch_after = false)
     {
         set_latlon_spinner(true);
 
+        const request_id = ++_geo_request_id;
+        _geo_pending     = true;
+        _geo_fetch_after = fetch_after;
+
         navigator.geolocation.getCurrentPosition(
             (pos) =>
             {
+                if (request_id !== _geo_request_id) return;
+                _geo_pending = false;
                 set_latlon_spinner(false);
                 set_location(pos.coords.latitude.toFixed(4), pos.coords.longitude.toFixed(4));
                 if (fetch_after)
@@ -81,12 +102,15 @@ function here_and_now(fetch_after = false)
             },
             () =>
             {
-                document.getElementById("plot_spinner").style.display = "none";
-                set_latlon_spinner(false);
-                set_location(52, 6);
                 const btn  = document.getElementById("here_and_now_btn");
                 btn.disabled = true;
                 btn.title    = "Enable location sharing in your browser to use this feature.";
+
+                if (request_id !== _geo_request_id) return;
+                _geo_pending = false;
+                document.getElementById("plot_spinner").style.display = "none";
+                set_latlon_spinner(false);
+                set_location(52, 6);
             }
         );
     }
@@ -174,6 +198,7 @@ document.getElementById("map_ok_btn").addEventListener("click", () =>
     if (_pending_lat !== null && _pending_lon !== null)
     {
         hide_map();
+        cancel_pending_geolocation();
         set_location(_pending_lat.toFixed(4), _pending_lon.toFixed(4), false);
         document.getElementById("plot_spinner").style.display = "";
         document.getElementById("fetch_model_btn").click();
@@ -197,14 +222,15 @@ document.addEventListener("keydown", (e) =>
 });
 
 for (const id of ["lat_input", "lon_input"])
-    document.getElementById(id).addEventListener("input", () => { reset_case_select(); fetch_nearest_stations(); });
+    document.getElementById(id).addEventListener("input", () => { cancel_pending_geolocation(); reset_case_select(); fetch_nearest_stations(); });
 
-document.getElementById("date_input").addEventListener("input", reset_case_select);
-document.getElementById("time_input").addEventListener("input", reset_case_select);
+for (const id of ["date_input", "time_input"])
+    document.getElementById(id).addEventListener("input", () => { cancel_pending_geolocation(); reset_case_select(); });
 
 document.getElementById("case_select").addEventListener("change", (e) =>
 {
     if (!e.target.value) return;
+    cancel_pending_geolocation();
     const [, date, lat, lon, time] = e.target.value.split("|");
     document.getElementById("lat_input").value  = lat;
     document.getElementById("lon_input").value  = lon;
