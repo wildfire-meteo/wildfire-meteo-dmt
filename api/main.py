@@ -125,6 +125,12 @@ def nearest_stations(lat: float = Query(...), lon: float = Query(...)):
     return result
 
 
+def finite_list(values):
+    """Values as a list, with NaN, inf and non-numbers as null: JSON has none of them."""
+    v = pd.to_numeric(values, errors="coerce")
+    return v.astype(object).where(v.abs() < float("inf"), None).tolist()
+
+
 @app.get("/api/radiosonde_sounding")
 def radiosonde_sounding(station: str = Query(...), date: str = Query(...), hour: int = Query(12)):
     try:
@@ -134,9 +140,9 @@ def radiosonde_sounding(station: str = Query(...), date: str = Query(...), hour:
         raise HTTPException(status_code=404, detail="Selected date/time might not be available.")
 
     return {
-        "p_hpa": (df["pressure"] / 100).tolist(),
-        "T":     df["temperature"].tolist(),
-        "Td":    df["Td"].tolist(),
+        "p_hpa": finite_list(df["pressure"] / 100),
+        "T":     finite_list(df["temperature"]),
+        "Td":    finite_list(df["Td"]),
         "time":  dt.strftime("%H:%M"),
     }
 
@@ -149,17 +155,11 @@ async def upload_sounding(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid sounding format.")
 
-    # Sonde ascent rate, if the export has it. Gaps go out as null: JSON has no NaN.
-    rise_speed = None
-    if "rise_speed" in df:
-        w = pd.to_numeric(df["rise_speed"], errors="coerce")
-        rise_speed = w.astype(object).where(w.notna(), None).tolist()
-
     return {
-        "p_hpa":      (df["pressure"] / 100).tolist(),
-        "T":          df["temperature"].tolist(),
-        "Td":         df["Td"].tolist(),
-        "rise_speed": rise_speed,
+        "p_hpa":      finite_list(df["pressure"] / 100),
+        "T":          finite_list(df["temperature"]),
+        "Td":         finite_list(df["Td"]),
+        "rise_speed": finite_list(df["rise_speed"]) if "rise_speed" in df else None,
         "time":       df.index[0].strftime("%H:%M"),
     }
 

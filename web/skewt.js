@@ -1536,10 +1536,12 @@ function draw_skewt()
 
     if (obs_sounding)
     {
-        const line = d3.line().x(d => x(d[0])).y(d => y(d[1]));
+        // Gaps (null) break the line; checked before the transform, which would take null as 0 K.
+        const line = d3.line().defined(d => d).x(d => x(d[0])).y(d => y(d[1]));
+        const pt   = (t, p) => Number.isFinite(t) && Number.isFinite(p) ? [skew_transform(t, p), p] : null;
 
-        const t_pts  = obs_sounding.T.map( (t, i) => [skew_transform(t,  obs_sounding.p_hpa[i]), obs_sounding.p_hpa[i]]);
-        const td_pts = obs_sounding.Td.map((t, i) => [skew_transform(t, obs_sounding.p_hpa[i]), obs_sounding.p_hpa[i]]);
+        const t_pts  = obs_sounding.T.map( (t, i) => pt(t, obs_sounding.p_hpa[i]));
+        const td_pts = obs_sounding.Td.map((t, i) => pt(t, obs_sounding.p_hpa[i]));
 
         chart.append("path").datum(t_pts)
             .attr("fill", "none").attr("stroke", color_T)
@@ -1759,17 +1761,14 @@ document.getElementById("match_profile_btn").addEventListener("click", () =>
     const T_pairs  = prep_profile(obs_sounding.T);
     const Td_pairs = prep_profile(obs_sounding.Td);
 
-    const p_obs_min = Math.min(...obs_sounding.p_hpa);
-    const p_obs_max = Math.max(...obs_sounding.p_hpa);
-
-    model_sounding.p_hpa.forEach((p, i) =>
+    // Each over the range it has data for, so missing levels keep the model values.
+    const match = (target, pairs) => model_sounding.p_hpa.forEach((p, i) =>
     {
-        if (p <= p_obs_max && p >= p_obs_min)
-        {
-            model_sounding.T[i]  = interp_log_p(p, T_pairs);
-            model_sounding.Td[i] = interp_log_p(p, Td_pairs);
-        }
+        if (pairs.length && p <= pairs[0][0] && p >= pairs[pairs.length - 1][0])
+            target[i] = interp_log_p(p, pairs);
     });
+    match(model_sounding.T,  T_pairs);
+    match(model_sounding.Td, Td_pairs);
 
     draw_skewt();
 });
