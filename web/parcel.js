@@ -17,18 +17,16 @@
 import { Rd, g, exner, qsat, dewpoint, sat_adjust, virtual_temp } from "./thermo.js";
 
 
-// Constants are fitted to dry LES plume cores (https://github.com/wildfire-meteo/plume-model).
+// Constants are fitted to dry LES plume cores (https://github.com/wildfire-meteo/plume-model)
+// and to observations from the 2026 fire season.
 export const A_W      = 0.5;
-export const B_W      = 0.5;
-export const A_E      = 0.4; // Morton entrainment, scaled by the fire's size
-export const B_E      = 0.3; // Buoyancy-driven entrainment, largest near the base where w is small
+export const B_W      = 0.3;
+export const A_E      = 0.1; // Morton entrainment, scaled by the fire's size
+export const B_E      = 0.5; // Buoyancy-driven entrainment, largest near the base where w is small
 export const BETA     = 0.5; // The ratio fractional detrainment / fractional entrainment
 export const C_DET    = 2;   // Dynamic detrainment -C_DET/w dw/dz where w decreases; > 1 shrinks the area as w -> 0
 export const DZ_PLUME = 10;
 export const H0_PLUME = 20;
-
-// TEMPORARY: live overrides of the entrainment constants, set from the tuning panel.
-export const TUNING = { a_e: A_E, b_e: B_E, beta: BETA, c_det: C_DET };
 
 
 export function interp(x, xp, fp)
@@ -82,10 +80,10 @@ export function calc_parcel_ascent(
         fire_multiplier = 1,
         a_w    = A_W,
         b_w    = B_W,
-        a_e    = TUNING.a_e,
-        b_e    = TUNING.b_e,
-        beta   = TUNING.beta,
-        c_det  = TUNING.c_det,
+        a_e    = A_E,
+        b_e    = B_E,
+        beta   = BETA,
+        c_det  = C_DET,
         dz     = DZ_PLUME,
         z_max  = 5000,
         full_ascent = false,

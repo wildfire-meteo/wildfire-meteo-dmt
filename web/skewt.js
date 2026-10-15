@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { calc_parcel_ascent, interp, H0_PLUME, TUNING, A_E, B_E, BETA, C_DET } from "./parcel.js";
+import { calc_parcel_ascent, interp, H0_PLUME } from "./parcel.js";
 import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
@@ -577,26 +577,6 @@ document.getElementById("x_axis_mode").addEventListener("change", draw_skewt);
 document.getElementById("p_top").addEventListener("input", (e) =>
 {
     document.getElementById("p_top_label").textContent = `Top: ${e.target.value} hPa`;
-    draw_skewt();
-});
-
-// TEMPORARY: entrainment tuning panel.
-const TUNING_DEFAULTS = { a_e: A_E, b_e: B_E, beta: BETA, c_det: C_DET };
-Object.keys(TUNING).forEach(k =>
-{
-    const input = document.getElementById(`tune_${k}`);
-    input.value = TUNING[k];
-    input.addEventListener("input", () =>
-    {
-        if (input.value === "" || !Number.isFinite(+input.value)) return;
-        TUNING[k] = +input.value;
-        draw_skewt();
-    });
-});
-document.getElementById("tune_reset").addEventListener("click", () =>
-{
-    Object.assign(TUNING, TUNING_DEFAULTS);
-    Object.keys(TUNING).forEach(k => document.getElementById(`tune_${k}`).value = TUNING[k]);
     draw_skewt();
 });
 
