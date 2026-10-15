@@ -27,6 +27,9 @@ export const C_DET    = 2;   // Dynamic detrainment -C_DET/w dw/dz where w decre
 export const DZ_PLUME = 10;
 export const H0_PLUME = 20;
 
+// TEMPORARY: live overrides of the entrainment constants, set from the tuning panel.
+export const TUNING = { a_e: A_E, b_e: B_E, beta: BETA, c_det: C_DET };
+
 
 export function interp(x, xp, fp)
 {
@@ -79,10 +82,10 @@ export function calc_parcel_ascent(
         fire_multiplier = 1,
         a_w    = A_W,
         b_w    = B_W,
-        a_e    = A_E,
-        b_e    = B_E,
-        beta   = BETA,
-        c_det  = C_DET,
+        a_e    = TUNING.a_e,
+        b_e    = TUNING.b_e,
+        beta   = TUNING.beta,
+        c_det  = TUNING.c_det,
         dz     = DZ_PLUME,
         z_max  = 5000,
         full_ascent = false,

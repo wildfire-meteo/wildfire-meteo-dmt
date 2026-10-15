@@ -149,11 +149,18 @@ async def upload_sounding(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid sounding format.")
 
+    # Sonde ascent rate, if the export has it. Gaps go out as null: JSON has no NaN.
+    rise_speed = None
+    if "rise_speed" in df:
+        w = pd.to_numeric(df["rise_speed"], errors="coerce")
+        rise_speed = w.astype(object).where(w.notna(), None).tolist()
+
     return {
-        "p_hpa": (df["pressure"] / 100).tolist(),
-        "T":     df["temperature"].tolist(),
-        "Td":    df["Td"].tolist(),
-        "time":  df.index[0].strftime("%H:%M"),
+        "p_hpa":      (df["pressure"] / 100).tolist(),
+        "T":          df["temperature"].tolist(),
+        "Td":         df["Td"].tolist(),
+        "rise_speed": rise_speed,
+        "time":       df.index[0].strftime("%H:%M"),
     }
 
 

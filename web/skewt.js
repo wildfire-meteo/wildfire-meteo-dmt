@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { calc_parcel_ascent, interp, H0_PLUME } from "./parcel.js";
+import { calc_parcel_ascent, interp, H0_PLUME, TUNING, A_E, B_E, BETA, C_DET } from "./parcel.js";
 import { make_parcel, MAX_PARCELS } from "./parcel_state.js";
 import { Rd, exner, qsat, dewpoint, virtual_temp } from "./thermo.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE, H_from_dtheta, LE_from_dq } from "./fire_surface.js";
@@ -56,6 +56,8 @@ function active_parcel()
 
 const color_T     = "#EB0056";
 const color_Td    = "#0056EB";
+const color_w_obs = "#E08A00";   // apart from the greyscale parcel palette
+const LW_W_OBS    = 1.2;
 const font_size   = "14px";
 
 // Line weights and opacities. Parcels sit above the construction lines, but only the
@@ -70,8 +72,9 @@ const OP_PARCEL_IDLE = 1.0;
 
 // Parcels are dashed, to set them apart from the soundings and the construction. The
 // dashes are long enough not to read as a dotted line where a parcel runs close to the
-// isobars (4,3) or an observed sounding (6,3).
+// isobars (4,3) or an observed sounding (DASH_OBS).
 const DASH_PARCEL = "12,5";
+const DASH_OBS    = "6,3";   // observed T, Td and w
 
 // Cloud base and plume top rules. Drawn for the parcel under edit only, and kept light:
 // they are grid lines, not another parcel line to read.
@@ -577,6 +580,26 @@ document.getElementById("p_top").addEventListener("input", (e) =>
     draw_skewt();
 });
 
+// TEMPORARY: entrainment tuning panel.
+const TUNING_DEFAULTS = { a_e: A_E, b_e: B_E, beta: BETA, c_det: C_DET };
+Object.keys(TUNING).forEach(k =>
+{
+    const input = document.getElementById(`tune_${k}`);
+    input.value = TUNING[k];
+    input.addEventListener("input", () =>
+    {
+        if (input.value === "" || !Number.isFinite(+input.value)) return;
+        TUNING[k] = +input.value;
+        draw_skewt();
+    });
+});
+document.getElementById("tune_reset").addEventListener("click", () =>
+{
+    Object.assign(TUNING, TUNING_DEFAULTS);
+    Object.keys(TUNING).forEach(k => document.getElementById(`tune_${k}`).value = TUNING[k]);
+    draw_skewt();
+});
+
 function bg_rgba(rgb)
 {
     return `rgba(${rgb},${document.getElementById("bg_line_opacity").value})`;
@@ -657,25 +680,33 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
 
 // Dynamic content of the w panel, redrawn on every drag tick. Shares y with the
 // main plot; the frame is drawn once per draw_skewt. Entries come in draw order,
-// so the active parcel is last and ends up on top.
-function draw_w_panel(panel, y, H, entries)
+// so the active parcel is last and ends up on top. obs is the observed sounding, if any.
+function draw_w_panel(panel, y, H, entries, obs)
 {
     const dyn = panel.append("g").attr("class", "w-panel-dyn");
 
     const w_max_all = Math.max(0, ...entries.map(e => Math.max(0, ...e.result.w)));
 
-    if (w_max_all === 0)
-    {
+    // Sonde rise speed (WDP uploads only), with gaps where it reported none.
+    const obs_pts   = obs?.w ? obs.w.map((w, i) => [w, obs.p_hpa[i]]) : [];
+    const obs_ok    = d => Number.isFinite(d[0]) && Number.isFinite(d[1]);
+    const w_max_obs = Math.max(0, ...obs_pts.filter(obs_ok).map(d => d[0]));
+
+    const hint = () =>
         ["Raise the sensible", "heat flux to", "launch a plume"].forEach((msg, i) =>
             dyn.append("text")
                 .attr("x", W_PANEL_W / 2).attr("y", H / 2 + i * 15)
                 .attr("text-anchor", "middle")
                 .attr("font-size", "11px").attr("fill", "#888")
                 .text(msg));
+
+    if (w_max_all === 0 && w_max_obs === 0)
+    {
+        hint();
         return;
     }
 
-    const w_top = W_AXIS_LADDER.find(v => v >= w_max_all) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
+    const w_top = W_AXIS_LADDER.find(v => v >= Math.max(w_max_all, w_max_obs)) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
     const xw    = d3.scaleLinear().domain([0, w_top]).range([0, W_PANEL_W]);
     const ticks = [0, w_top / 2, w_top];
 
@@ -708,6 +739,16 @@ function draw_w_panel(panel, y, H, entries)
     const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
     const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
 
+    // Under the parcels.
+    if (w_max_obs > 0)
+        clip.append("path")
+            .datum(obs_pts)
+            .attr("fill", "none")
+            .attr("stroke", color_w_obs)
+            .attr("stroke-width", LW_W_OBS)
+            .attr("stroke-dasharray", DASH_OBS)
+            .attr("d", d3.line().defined(obs_ok).x(d => xw(d[0])).y(d => y(d[1])));
+
     entries.forEach(({ parcel, result, is_active }) =>
     {
         const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
@@ -727,6 +768,7 @@ function draw_w_panel(panel, y, H, entries)
         if (!is_active) return;
 
         const w_max = Math.max(...result.w);
+        if (w_max <= 0) return;
         const x_max = xw(w_max);
         const flip  = x_max > W_PANEL_W / 2;
 
@@ -745,6 +787,8 @@ function draw_w_panel(panel, y, H, entries)
         .attr("transform", `translate(0,${H})`)
         .call(d3.axisBottom(xw).tickValues(ticks))
         .selectAll("text").style("font-size", font_size);
+
+    if (w_max_all === 0) hint();
 }
 
 
@@ -1361,7 +1405,7 @@ function draw_skewt()
 
             draw_level_labels();
 
-            if (w_panel) draw_w_panel(w_panel, y, H, drawn);
+            if (w_panel) draw_w_panel(w_panel, y, H, drawn, obs_sounding);
             if (plan_panel) draw_plan_panel(plan_panel, w_avail, drawn);
         }
 
@@ -1479,11 +1523,11 @@ function draw_skewt()
 
         chart.append("path").datum(t_pts)
             .attr("fill", "none").attr("stroke", color_T)
-            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", DASH_OBS).attr("d", line);
 
         chart.append("path").datum(td_pts)
             .attr("fill", "none").attr("stroke", color_Td)
-            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", DASH_OBS).attr("d", line);
     }
 
     if ((model_sounding && show_model) || obs_sounding)
@@ -1497,8 +1541,10 @@ function draw_skewt()
         }
         if (obs_sounding)
         {
-            legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: "6,3" });
-            legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
+            legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: DASH_OBS });
+            legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: DASH_OBS });
+            if (w_panel_on && obs_sounding.w?.some(w => w > 0))
+                legend_items.push({ label: `w (obs ${obs_sounding.time})`, color: color_w_obs, dashes: DASH_OBS });
         }
         if (model_sounding && show_model && parcels.some(p => p.visible))
         {
@@ -1606,7 +1652,7 @@ function draw_skewt()
 
 function set_obs_sounding(data)
 {
-    obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
+    obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, w: data.rise_speed ?? null, time: data.time };
     document.getElementById("radiosonde_controls").style.display = "";
     draw_skewt();
 }
