@@ -202,7 +202,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("time_section").style.display = "";
 
         model_sounding = {
-            p_hpa:               data.p_hpa,
+            p_hpa:               [...data.p_hpa],
             T:                   data.T[current_time],
             Td:                  data.Td[current_time],
             z_agl:               data.z_agl[current_time],
@@ -242,7 +242,7 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     document.getElementById("time_label").textContent = model_forecast.times[current_time] + " UTC";
 
     model_sounding = {
-        p_hpa:               model_forecast.p_hpa,
+        p_hpa:               [...model_forecast.p_hpa],
         T:                   model_forecast.T[current_time],
         Td:                  model_forecast.Td[current_time],
         z_agl:               model_forecast.z_agl[current_time],
@@ -1232,9 +1232,9 @@ function draw_skewt()
         const sfc_pt_T  = [skew_transform(model_sounding.T_2m  ?? model_sounding.T[0],  sfc_p_hpa), sfc_p_hpa];
         const sfc_pt_Td = [skew_transform(model_sounding.Td_2m ?? model_sounding.Td[0], sfc_p_hpa), sfc_p_hpa];
 
-        // Pressure-level points filtered to above (or at) the surface.
-        const lev_pts_T  = model_sounding.T.map( (t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]).filter(d => d[1] <= sfc_p_hpa);
-        const lev_pts_Td = model_sounding.Td.map((t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]).filter(d => d[1] <= sfc_p_hpa);
+        // Pressure-level points filtered to above (or at) the surface; d[2] is the level index.
+        const lev_pts_T  = model_sounding.T.map( (t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i], i]).filter(d => d[1] <= sfc_p_hpa);
+        const lev_pts_Td = model_sounding.Td.map((t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i], i]).filter(d => d[1] <= sfc_p_hpa);
 
         const t_pts  = [sfc_pt_T,  ...lev_pts_T];
         const td_pts = [sfc_pt_Td, ...lev_pts_Td];
@@ -1389,6 +1389,9 @@ function draw_skewt()
             if (plan_panel) draw_plan_panel(plan_panel, w_avail, drawn);
         }
 
+        // Both profiles share the levels' pressures, so a vertical drag on one moves the other.
+        const profiles = [];
+
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
         {
             const path = chart.append("path").datum(pts)
@@ -1397,23 +1400,60 @@ function draw_skewt()
                 .attr("stroke-width", LW_PROFILE)
                 .attr("d", line);
 
+            let circles = null;
+            profiles.push(() =>
+            {
+                pts.forEach(d =>
+                {
+                    if (d[2] === undefined) return;
+                    d[1] = model_sounding.p_hpa[d[2]];
+                    d[0] = skew_transform(source_T[d[2]], d[1]);
+                });
+                path.attr("d", line);
+                circles?.attr("cx", d => x(d[0])).attr("cy", d => y(d[1]));
+            });
+
+            // Pressure bounds and height anchors of the dragged level, fixed at drag start.
+            let p_max, p_min, lo, hi;
+
             const drag = d3.drag()
-                .on("start", function ()
+                .on("start", function (event, d)
                 {
                     d3.select(this).style("cursor", "grabbing");
+                    const i = d[2];
+                    if (i === undefined) return;
+
+                    // Levels run from high to low pressure; stay 1 hPa clear of the neighbours,
+                    // with the surface as the lower neighbour of the first level above it.
+                    const p = model_sounding.p_hpa, z = model_sounding.z_agl;
+                    lo = i > 0 && p[i - 1] < sfc_p_hpa ? [p[i - 1], z[i - 1]] : [sfc_p_hpa, 0];
+                    hi = i < p.length - 1 ? [p[i + 1], z[i + 1]] : [p[i], z[i]];
+                    p_max = lo[0] - 1;
+                    p_min = i < p.length - 1 ? p[i + 1] + 1 : y.invert(0);
                 })
                 .on("drag", function (event, d)
                 {
-                    d[0] = x.invert(event.x);
-                    d3.select(this).attr("cx", x(d[0]));
-                    path.attr("d", line);
+                    const i = d[2];
+                    if (i === undefined)
+                    {
+                        d[0] = x.invert(event.x);
+                        if (on_surface_drag)
+                            on_surface_drag(inv_skew_transform(d[0], d[1]));
+                        profiles.forEach(f => f());
+                        redraw_all_parcels();
+                        return;
+                    }
 
-                    const i = model_sounding.p_hpa.indexOf(d[1]);
-                    if (i !== -1)
-                        source_T[i] = inv_skew_transform(d[0], d[1]);
-                    else if (on_surface_drag)
-                        on_surface_drag(inv_skew_transform(d[0], d[1]));
+                    const p_new = Math.min(p_max, Math.max(p_min, y.invert(event.y)));
+                    source_T[i] = inv_skew_transform(x.invert(event.x), p_new);
+                    // Height follows the pressure, linear in ln p between the anchors.
+                    const dz = (hi[1] - lo[1]) * Math.log(p_new / lo[0]) / Math.log(hi[0] / lo[0])
+                             + lo[1] - model_sounding.z_agl[i];
+                    model_sounding.z_agl[i] += dz;
+                    if (model_sounding.z) model_sounding.z[i] += dz;
+                    model_sounding.p_hpa[i] = p_new;
 
+                    profiles.forEach(f => f());
                     redraw_all_parcels();
                 })
                 .on("end", function ()
@@ -1423,7 +1463,7 @@ function draw_skewt()
                 });
 
             if (document.getElementById("edit_mode").checked)
-                chart.selectAll(null).data(pts).enter()
+                circles = chart.selectAll(null).data(pts).enter()
                     .append("circle")
                     .attr("cx", d => x(d[0]))
                     .attr("cy", d => y(d[1]))
