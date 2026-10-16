@@ -438,6 +438,7 @@ document.getElementById("show_plan_panel").addEventListener("change", () =>
 // Depth is stored, so dragging the surface T changes FLI at fixed depth and area.
 const RADIATIVE_HEAT_LOSS = 0.6;   // fraction of FLI radiated away rather than heating the air
 const LOG_FLI_MIN = 2;             // FLI slider positions below this mean no fire
+const T_PARCEL_MAX = 135 + 273.15; // K; caps the fire inputs well clear of where saturation physics breaks down
 
 // Moves the fire to a new area and heat flux at fixed latent heat flux. Without a fire
 // (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
@@ -448,7 +449,7 @@ function set_fire(p, fire_area, H)
     const s = get_surface_state(p);
     if (!s) return;
     const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
-    p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    p.dtheta = Math.min(dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent), s.dtheta_max);
     if (s_old.w0 > 0 && p.dtheta > 0)
         p.dq = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
 }
@@ -802,8 +803,11 @@ function get_surface_base()
     const v_env = has_wind ? [v_lev[fallback_idx], ...v_lev.slice(fallback_idx)] : z_env.map(() => 0);
     const wind_speed = Math.hypot(interp([H0_PLUME], z_env, u_env)[0], interp([H0_PLUME], z_env, v_env)[0]);
 
+    // Largest fire excess that keeps the parcel at the plume base below T_PARCEL_MAX.
+    const dtheta_max = Math.max(0, T_PARCEL_MAX / exner_sfc - theta_sfc);
+
     return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc,
-             u_env, v_env, wind_speed };
+             u_env, v_env, wind_speed, dtheta_max };
 }
 
 // Environment the plume rises through: surface point followed by all levels above it.
@@ -1521,7 +1525,7 @@ function draw_skewt()
                 {
                     const val_new = inv_skew_transform(x.invert(event.x), p_h0 / 100);
                     if (axis === "T")
-                        edit_parcel.dtheta = Math.max(0, (val_new - T_h0) / ex_h0);
+                        edit_parcel.dtheta = Math.min(get_surface_base().dtheta_max, Math.max(0, (val_new - T_h0) / ex_h0));
                     else
                         edit_parcel.dq = Math.max(0, qsat(val_new, p_h0) - qt_h0);
                     sync_fire_controls();
