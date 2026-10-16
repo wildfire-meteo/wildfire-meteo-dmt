@@ -175,6 +175,8 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
     {
         spinner.style.display = "none";
         model_forecast = data;
+        // Per-time levels, so a pressure edit stays with its time like T and Td edits do.
+        data.p_hpa_t = data.times.map(() => [...data.p_hpa]);
         document.getElementById("export_nc_btn").disabled = false;
 
         const time_str = document.getElementById("time_input").value;
@@ -202,7 +204,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("time_section").style.display = "";
 
         model_sounding = {
-            p_hpa:               [...data.p_hpa],
+            p_hpa:               data.p_hpa_t[current_time],
             T:                   data.T[current_time],
             Td:                  data.Td[current_time],
             z_agl:               data.z_agl[current_time],
@@ -242,7 +244,7 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     document.getElementById("time_label").textContent = model_forecast.times[current_time] + " UTC";
 
     model_sounding = {
-        p_hpa:               [...model_forecast.p_hpa],
+        p_hpa:               model_forecast.p_hpa_t[current_time],
         T:                   model_forecast.T[current_time],
         Td:                  model_forecast.Td[current_time],
         z_agl:               model_forecast.z_agl[current_time],
@@ -1475,8 +1477,9 @@ function draw_skewt()
                     .call(drag);
         }
 
-        const update_T_sfc  = v => { model_sounding.T_2m  = v; };
-        const update_Td_sfc = v => { model_sounding.Td_2m = v; };
+        // Written back to the forecast too, so the edit stays with its time.
+        const update_T_sfc  = v => { model_sounding.T_2m  = model_forecast.T_2m[current_time]  = v; };
+        const update_Td_sfc = v => { model_sounding.Td_2m = model_forecast.Td_2m[current_time] = v; };
 
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T,  update_T_sfc);
         draw_skewt_profile(td_pts, color_Td, model_sounding.Td, update_Td_sfc);
