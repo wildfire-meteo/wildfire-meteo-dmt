@@ -322,7 +322,7 @@ function render_parcel_list()
     }
 
     sync_panel_controls();
-    sync_sensitivity_control();
+    sync_mode_controls();
 }
 
 function row_icon(glyph, title, on_click)
@@ -411,10 +411,12 @@ function sync_panel_controls()
     document.getElementById("show_plan_panel").disabled = parcels.length === 0;
 }
 
-// Only entraining plumes depend on fire area, so the plot is offered for those alone.
-function sync_sensitivity_control()
+// Only entraining plumes depend on fire area, so the fire inputs and the plot are offered
+// for those alone. A non-entraining parcel is set by dragging its surface handles.
+function sync_mode_controls()
 {
     const show = active_parcel()?.mode === "entraining";
+    document.getElementById("fire_controls").style.display   = show ? "" : "none";
     document.getElementById("sens_toggle_btn").style.display = show ? "" : "none";
     if (show) return;
     document.getElementById("sens_options").style.display = "none";
@@ -425,7 +427,7 @@ document.getElementById("parcel_mode").addEventListener("change", (e) =>
 {
     const p = active_parcel();
     if (p) p.mode = e.target.value;
-    sync_sensitivity_control();
+    sync_mode_controls();
     draw_skewt();
 });
 // Toggling a panel changes the plot size, so reset the pixel-space zoom (this redraws).
