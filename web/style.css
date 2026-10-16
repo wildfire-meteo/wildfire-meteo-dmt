@@ -291,6 +291,11 @@ main {
     font-size: 1rem;
 }
 
+/* Lays its sliders out as direct children of the editor; JS hides it by mode. */
+#fire_controls {
+    display: contents;
+}
+
 .parcel-list {
     display: flex;
     flex-direction: column;

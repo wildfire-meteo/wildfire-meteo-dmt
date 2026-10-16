@@ -37,7 +37,8 @@ export function esat(T)
 
 export function qsat(T, p)
 {
-    const es = esat(T);
+    // Capped below p: above ~110 °C Magnus overshoots p and qsat would turn negative.
+    const es = Math.min(esat(T), 0.9 * p);
     return eps * es / (p - (1.0 - eps) * es);
 }
 

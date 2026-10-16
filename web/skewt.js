@@ -56,6 +56,8 @@ function active_parcel()
 
 const color_T     = "#EB0056";
 const color_Td    = "#0056EB";
+const color_w_obs = "#E08A00";   // apart from the greyscale parcel palette
+const LW_W_OBS    = 1.2;
 const font_size   = "14px";
 
 // Line weights and opacities. Parcels sit above the construction lines, but only the
@@ -70,8 +72,9 @@ const OP_PARCEL_IDLE = 1.0;
 
 // Parcels are dashed, to set them apart from the soundings and the construction. The
 // dashes are long enough not to read as a dotted line where a parcel runs close to the
-// isobars (4,3) or an observed sounding (6,3).
+// isobars (4,3) or an observed sounding (DASH_OBS).
 const DASH_PARCEL = "12,5";
+const DASH_OBS    = "6,3";   // observed T, Td and w
 
 // Cloud base and plume top rules. Drawn for the parcel under edit only, and kept light:
 // they are grid lines, not another parcel line to read.
@@ -172,6 +175,8 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
     {
         spinner.style.display = "none";
         model_forecast = data;
+        // Per-time levels, so a pressure edit stays with its time like T and Td edits do.
+        data.p_hpa_t = data.times.map(() => [...data.p_hpa]);
         document.getElementById("export_nc_btn").disabled = false;
 
         const time_str = document.getElementById("time_input").value;
@@ -199,7 +204,7 @@ document.getElementById("fetch_model_btn").addEventListener("click", () =>
         document.getElementById("time_section").style.display = "";
 
         model_sounding = {
-            p_hpa:               data.p_hpa,
+            p_hpa:               data.p_hpa_t[current_time],
             T:                   data.T[current_time],
             Td:                  data.Td[current_time],
             z_agl:               data.z_agl[current_time],
@@ -239,7 +244,7 @@ document.getElementById("time_slider").addEventListener("input", (e) =>
     document.getElementById("time_label").textContent = model_forecast.times[current_time] + " UTC";
 
     model_sounding = {
-        p_hpa:               model_forecast.p_hpa,
+        p_hpa:               model_forecast.p_hpa_t[current_time],
         T:                   model_forecast.T[current_time],
         Td:                  model_forecast.Td[current_time],
         z_agl:               model_forecast.z_agl[current_time],
@@ -317,7 +322,7 @@ function render_parcel_list()
     }
 
     sync_panel_controls();
-    sync_sensitivity_control();
+    sync_mode_controls();
 }
 
 function row_icon(glyph, title, on_click)
@@ -406,10 +411,12 @@ function sync_panel_controls()
     document.getElementById("show_plan_panel").disabled = parcels.length === 0;
 }
 
-// Only entraining plumes depend on fire area, so the plot is offered for those alone.
-function sync_sensitivity_control()
+// Only entraining plumes depend on fire area, so the fire inputs and the plot are offered
+// for those alone. A non-entraining parcel is set by dragging its surface handles.
+function sync_mode_controls()
 {
     const show = active_parcel()?.mode === "entraining";
+    document.getElementById("fire_controls").style.display   = show ? "" : "none";
     document.getElementById("sens_toggle_btn").style.display = show ? "" : "none";
     if (show) return;
     document.getElementById("sens_options").style.display = "none";
@@ -420,7 +427,7 @@ document.getElementById("parcel_mode").addEventListener("change", (e) =>
 {
     const p = active_parcel();
     if (p) p.mode = e.target.value;
-    sync_sensitivity_control();
+    sync_mode_controls();
     draw_skewt();
 });
 // Toggling a panel changes the plot size, so reset the pixel-space zoom (this redraws).
@@ -433,6 +440,7 @@ document.getElementById("show_plan_panel").addEventListener("change", () =>
 // Depth is stored, so dragging the surface T changes FLI at fixed depth and area.
 const RADIATIVE_HEAT_LOSS = 0.6;   // fraction of FLI radiated away rather than heating the air
 const LOG_FLI_MIN = 2;             // FLI slider positions below this mean no fire
+const T_PARCEL_MAX = 135 + 273.15; // K; caps the fire inputs well clear of where saturation physics breaks down
 
 // Moves the fire to a new area and heat flux at fixed latent heat flux. Without a fire
 // (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
@@ -443,7 +451,7 @@ function set_fire(p, fire_area, H)
     const s = get_surface_state(p);
     if (!s) return;
     const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
-    p.dtheta = dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent);
+    p.dtheta = Math.min(dtheta_from_H(H, s.rho_sfc, s.thetav_sfc, s.u_vent), s.dtheta_max);
     if (s_old.w0 > 0 && p.dtheta > 0)
         p.dq = dq_from_LE(LE, p.dtheta, s.rho_sfc, s.thetav_sfc, s.u_vent);
 }
@@ -657,25 +665,33 @@ function draw_isohume_labels(chart, x, y, isohumes, p_isohumes_pa, mixing_ratios
 
 // Dynamic content of the w panel, redrawn on every drag tick. Shares y with the
 // main plot; the frame is drawn once per draw_skewt. Entries come in draw order,
-// so the active parcel is last and ends up on top.
-function draw_w_panel(panel, y, H, entries)
+// so the active parcel is last and ends up on top. obs is the observed sounding, if any.
+function draw_w_panel(panel, y, H, entries, obs)
 {
     const dyn = panel.append("g").attr("class", "w-panel-dyn");
 
     const w_max_all = Math.max(0, ...entries.map(e => Math.max(0, ...e.result.w)));
 
-    if (w_max_all === 0)
-    {
+    // Sonde rise speed (WDP uploads only), with gaps where it reported none.
+    const obs_pts   = obs?.w ? obs.w.map((w, i) => [w, obs.p_hpa[i]]) : [];
+    const obs_ok    = d => Number.isFinite(d[0]) && Number.isFinite(d[1]);
+    const w_max_obs = Math.max(0, ...obs_pts.filter(obs_ok).map(d => d[0]));
+
+    const hint = () =>
         ["Raise the sensible", "heat flux to", "launch a plume"].forEach((msg, i) =>
             dyn.append("text")
                 .attr("x", W_PANEL_W / 2).attr("y", H / 2 + i * 15)
                 .attr("text-anchor", "middle")
                 .attr("font-size", "11px").attr("fill", "#888")
                 .text(msg));
+
+    if (w_max_all === 0 && w_max_obs === 0)
+    {
+        hint();
         return;
     }
 
-    const w_top = W_AXIS_LADDER.find(v => v >= w_max_all) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
+    const w_top = W_AXIS_LADDER.find(v => v >= Math.max(w_max_all, w_max_obs)) ?? W_AXIS_LADDER[W_AXIS_LADDER.length - 1];
     const xw    = d3.scaleLinear().domain([0, w_top]).range([0, W_PANEL_W]);
     const ticks = [0, w_top / 2, w_top];
 
@@ -708,6 +724,16 @@ function draw_w_panel(panel, y, H, entries)
     const clip = dyn.append("g").attr("clip-path", "url(#w-panel-clip)");
     const line = d3.line().x(d => xw(d[0])).y(d => y(d[1]));
 
+    // Under the parcels.
+    if (w_max_obs > 0)
+        clip.append("path")
+            .datum(obs_pts)
+            .attr("fill", "none")
+            .attr("stroke", color_w_obs)
+            .attr("stroke-width", LW_W_OBS)
+            .attr("stroke-dasharray", DASH_OBS)
+            .attr("d", d3.line().defined(obs_ok).x(d => xw(d[0])).y(d => y(d[1])));
+
     entries.forEach(({ parcel, result, is_active }) =>
     {
         const lw = is_active ? LW_PARCEL : LW_PARCEL_IDLE;
@@ -727,6 +753,7 @@ function draw_w_panel(panel, y, H, entries)
         if (!is_active) return;
 
         const w_max = Math.max(...result.w);
+        if (w_max <= 0) return;
         const x_max = xw(w_max);
         const flip  = x_max > W_PANEL_W / 2;
 
@@ -745,6 +772,8 @@ function draw_w_panel(panel, y, H, entries)
         .attr("transform", `translate(0,${H})`)
         .call(d3.axisBottom(xw).tickValues(ticks))
         .selectAll("text").style("font-size", font_size);
+
+    if (w_max_all === 0) hint();
 }
 
 
@@ -776,8 +805,11 @@ function get_surface_base()
     const v_env = has_wind ? [v_lev[fallback_idx], ...v_lev.slice(fallback_idx)] : z_env.map(() => 0);
     const wind_speed = Math.hypot(interp([H0_PLUME], z_env, u_env)[0], interp([H0_PLUME], z_env, v_env)[0]);
 
+    // Largest fire excess that keeps the parcel at the plume base below T_PARCEL_MAX.
+    const dtheta_max = Math.max(0, T_PARCEL_MAX / exner_sfc - theta_sfc);
+
     return { p_sfc_pa, T_env_sfc, Td_env_sfc, exner_sfc, theta_sfc, qt_sfc, thetav_sfc, rho_sfc,
-             u_env, v_env, wind_speed };
+             u_env, v_env, wind_speed, dtheta_max };
 }
 
 // Environment the plume rises through: surface point followed by all levels above it.
@@ -1208,9 +1240,9 @@ function draw_skewt()
         const sfc_pt_T  = [skew_transform(model_sounding.T_2m  ?? model_sounding.T[0],  sfc_p_hpa), sfc_p_hpa];
         const sfc_pt_Td = [skew_transform(model_sounding.Td_2m ?? model_sounding.Td[0], sfc_p_hpa), sfc_p_hpa];
 
-        // Pressure-level points filtered to above (or at) the surface.
-        const lev_pts_T  = model_sounding.T.map( (t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]).filter(d => d[1] <= sfc_p_hpa);
-        const lev_pts_Td = model_sounding.Td.map((t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i]]).filter(d => d[1] <= sfc_p_hpa);
+        // Pressure-level points filtered to above (or at) the surface; d[2] is the level index.
+        const lev_pts_T  = model_sounding.T.map( (t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i], i]).filter(d => d[1] <= sfc_p_hpa);
+        const lev_pts_Td = model_sounding.Td.map((t, i) => [skew_transform(t, model_sounding.p_hpa[i]), model_sounding.p_hpa[i], i]).filter(d => d[1] <= sfc_p_hpa);
 
         const t_pts  = [sfc_pt_T,  ...lev_pts_T];
         const td_pts = [sfc_pt_Td, ...lev_pts_Td];
@@ -1361,9 +1393,12 @@ function draw_skewt()
 
             draw_level_labels();
 
-            if (w_panel) draw_w_panel(w_panel, y, H, drawn);
+            if (w_panel) draw_w_panel(w_panel, y, H, drawn, obs_sounding);
             if (plan_panel) draw_plan_panel(plan_panel, w_avail, drawn);
         }
+
+        // Both profiles share the levels' pressures, so a vertical drag on one moves the other.
+        const profiles = [];
 
         function draw_skewt_profile(pts, color, source_T, on_surface_drag)
         {
@@ -1373,23 +1408,60 @@ function draw_skewt()
                 .attr("stroke-width", LW_PROFILE)
                 .attr("d", line);
 
+            let circles = null;
+            profiles.push(() =>
+            {
+                pts.forEach(d =>
+                {
+                    if (d[2] === undefined) return;
+                    d[1] = model_sounding.p_hpa[d[2]];
+                    d[0] = skew_transform(source_T[d[2]], d[1]);
+                });
+                path.attr("d", line);
+                circles?.attr("cx", d => x(d[0])).attr("cy", d => y(d[1]));
+            });
+
+            // Pressure bounds and height anchors of the dragged level, fixed at drag start.
+            let p_max, p_min, lo, hi;
+
             const drag = d3.drag()
-                .on("start", function ()
+                .on("start", function (event, d)
                 {
                     d3.select(this).style("cursor", "grabbing");
+                    const i = d[2];
+                    if (i === undefined) return;
+
+                    // Levels run from high to low pressure; stay 1 hPa clear of the neighbours,
+                    // with the surface as the lower neighbour of the first level above it.
+                    const p = model_sounding.p_hpa, z = model_sounding.z_agl;
+                    lo = i > 0 && p[i - 1] < sfc_p_hpa ? [p[i - 1], z[i - 1]] : [sfc_p_hpa, 0];
+                    hi = i < p.length - 1 ? [p[i + 1], z[i + 1]] : [p[i], z[i]];
+                    p_max = lo[0] - 1;
+                    p_min = i < p.length - 1 ? p[i + 1] + 1 : y.invert(0);
                 })
                 .on("drag", function (event, d)
                 {
-                    d[0] = x.invert(event.x);
-                    d3.select(this).attr("cx", x(d[0]));
-                    path.attr("d", line);
+                    const i = d[2];
+                    if (i === undefined)
+                    {
+                        d[0] = x.invert(event.x);
+                        if (on_surface_drag)
+                            on_surface_drag(inv_skew_transform(d[0], d[1]));
+                        profiles.forEach(f => f());
+                        redraw_all_parcels();
+                        return;
+                    }
 
-                    const i = model_sounding.p_hpa.indexOf(d[1]);
-                    if (i !== -1)
-                        source_T[i] = inv_skew_transform(d[0], d[1]);
-                    else if (on_surface_drag)
-                        on_surface_drag(inv_skew_transform(d[0], d[1]));
+                    const p_new = Math.min(p_max, Math.max(p_min, y.invert(event.y)));
+                    source_T[i] = inv_skew_transform(x.invert(event.x), p_new);
+                    // Height follows the pressure, linear in ln p between the anchors.
+                    const dz = (hi[1] - lo[1]) * Math.log(p_new / lo[0]) / Math.log(hi[0] / lo[0])
+                             + lo[1] - model_sounding.z_agl[i];
+                    model_sounding.z_agl[i] += dz;
+                    if (model_sounding.z) model_sounding.z[i] += dz;
+                    model_sounding.p_hpa[i] = p_new;
 
+                    profiles.forEach(f => f());
                     redraw_all_parcels();
                 })
                 .on("end", function ()
@@ -1399,7 +1471,7 @@ function draw_skewt()
                 });
 
             if (document.getElementById("edit_mode").checked)
-                chart.selectAll(null).data(pts).enter()
+                circles = chart.selectAll(null).data(pts).enter()
                     .append("circle")
                     .attr("cx", d => x(d[0]))
                     .attr("cy", d => y(d[1]))
@@ -1411,8 +1483,9 @@ function draw_skewt()
                     .call(drag);
         }
 
-        const update_T_sfc  = v => { model_sounding.T_2m  = v; };
-        const update_Td_sfc = v => { model_sounding.Td_2m = v; };
+        // Written back to the forecast too, so the edit stays with its time.
+        const update_T_sfc  = v => { model_sounding.T_2m  = model_forecast.T_2m[current_time]  = v; };
+        const update_Td_sfc = v => { model_sounding.Td_2m = model_forecast.Td_2m[current_time] = v; };
 
         draw_skewt_profile(t_pts,  color_T,  model_sounding.T,  update_T_sfc);
         draw_skewt_profile(td_pts, color_Td, model_sounding.Td, update_Td_sfc);
@@ -1454,7 +1527,7 @@ function draw_skewt()
                 {
                     const val_new = inv_skew_transform(x.invert(event.x), p_h0 / 100);
                     if (axis === "T")
-                        edit_parcel.dtheta = Math.max(0, (val_new - T_h0) / ex_h0);
+                        edit_parcel.dtheta = Math.min(get_surface_base().dtheta_max, Math.max(0, (val_new - T_h0) / ex_h0));
                     else
                         edit_parcel.dq = Math.max(0, qsat(val_new, p_h0) - qt_h0);
                     sync_fire_controls();
@@ -1472,18 +1545,20 @@ function draw_skewt()
 
     if (obs_sounding)
     {
-        const line = d3.line().x(d => x(d[0])).y(d => y(d[1]));
+        // Gaps (null) break the line; checked before the transform, which would take null as 0 K.
+        const line = d3.line().defined(d => d).x(d => x(d[0])).y(d => y(d[1]));
+        const pt   = (t, p) => Number.isFinite(t) && Number.isFinite(p) ? [skew_transform(t, p), p] : null;
 
-        const t_pts  = obs_sounding.T.map( (t, i) => [skew_transform(t,  obs_sounding.p_hpa[i]), obs_sounding.p_hpa[i]]);
-        const td_pts = obs_sounding.Td.map((t, i) => [skew_transform(t, obs_sounding.p_hpa[i]), obs_sounding.p_hpa[i]]);
+        const t_pts  = obs_sounding.T.map( (t, i) => pt(t, obs_sounding.p_hpa[i]));
+        const td_pts = obs_sounding.Td.map((t, i) => pt(t, obs_sounding.p_hpa[i]));
 
         chart.append("path").datum(t_pts)
             .attr("fill", "none").attr("stroke", color_T)
-            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", DASH_OBS).attr("d", line);
 
         chart.append("path").datum(td_pts)
             .attr("fill", "none").attr("stroke", color_Td)
-            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", "6,3").attr("d", line);
+            .attr("stroke-width", LW_PROFILE).attr("stroke-dasharray", DASH_OBS).attr("d", line);
     }
 
     if ((model_sounding && show_model) || obs_sounding)
@@ -1497,8 +1572,10 @@ function draw_skewt()
         }
         if (obs_sounding)
         {
-            legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: "6,3" });
-            legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: "6,3" });
+            legend_items.push({ label: `T (obs ${obs_sounding.time})`,  color: color_T,  dashes: DASH_OBS });
+            legend_items.push({ label: `Td (obs ${obs_sounding.time})`, color: color_Td, dashes: DASH_OBS });
+            if (w_panel_on && obs_sounding.w?.some(w => w > 0))
+                legend_items.push({ label: `w (obs ${obs_sounding.time})`, color: color_w_obs, dashes: DASH_OBS });
         }
         if (model_sounding && show_model && parcels.some(p => p.visible))
         {
@@ -1606,7 +1683,7 @@ function draw_skewt()
 
 function set_obs_sounding(data)
 {
-    obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, time: data.time };
+    obs_sounding = { p_hpa: data.p_hpa, T: data.T, Td: data.Td, w: data.rise_speed ?? null, time: data.time };
     document.getElementById("radiosonde_controls").style.display = "";
     draw_skewt();
 }
@@ -1693,17 +1770,14 @@ document.getElementById("match_profile_btn").addEventListener("click", () =>
     const T_pairs  = prep_profile(obs_sounding.T);
     const Td_pairs = prep_profile(obs_sounding.Td);
 
-    const p_obs_min = Math.min(...obs_sounding.p_hpa);
-    const p_obs_max = Math.max(...obs_sounding.p_hpa);
-
-    model_sounding.p_hpa.forEach((p, i) =>
+    // Each over the range it has data for, so missing levels keep the model values.
+    const match = (target, pairs) => model_sounding.p_hpa.forEach((p, i) =>
     {
-        if (p <= p_obs_max && p >= p_obs_min)
-        {
-            model_sounding.T[i]  = interp_log_p(p, T_pairs);
-            model_sounding.Td[i] = interp_log_p(p, Td_pairs);
-        }
+        if (pairs.length && p <= pairs[0][0] && p >= pairs[pairs.length - 1][0])
+            target[i] = interp_log_p(p, pairs);
     });
+    match(model_sounding.T,  T_pairs);
+    match(model_sounding.Td, Td_pairs);
 
     draw_skewt();
 });
