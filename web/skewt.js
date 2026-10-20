@@ -442,12 +442,13 @@ const RADIATIVE_HEAT_LOSS = 0.6;   // fraction of FLI radiated away rather than 
 const LOG_FLI_MIN = 2;             // FLI slider positions below this mean no fire
 const T_PARCEL_MAX = 135 + 273.15; // K; caps the fire inputs well clear of where saturation physics breaks down
 
-// Moves the fire to a new area and heat flux at fixed latent heat flux. Without a fire
-// (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
-function set_fire(p, fire_area, H)
+// Moves the fire to a new area, depth and heat flux at fixed latent heat flux. Without a
+// fire (w0 = 0) the latent flux is zero, so leave a dragged-in dq alone.
+function set_fire(p, fire_area, fire_depth, H)
 {
     const s_old = get_surface_state(p);
-    p.fire_area = fire_area;
+    p.fire_area  = fire_area;
+    p.fire_depth = fire_depth;
     const s = get_surface_state(p);
     if (!s) return;
     const LE = LE_from_dq(s_old.dq, s_old.dtheta, s_old.rho_sfc, s_old.thetav_sfc, s_old.u_vent);
@@ -467,7 +468,7 @@ document.getElementById("fire_fli").addEventListener("input", (e) =>
     const p = active_parcel();
     if (!p) return;
     const log_fli = +e.target.value;
-    set_fire(p, p.fire_area, log_fli < LOG_FLI_MIN ? 0 : (1 - RADIATIVE_HEAT_LOSS) * 10 ** (log_fli + 3 - p.fire_depth));
+    set_fire(p, p.fire_area, p.fire_depth, log_fli < LOG_FLI_MIN ? 0 : (1 - RADIATIVE_HEAT_LOSS) * 10 ** (log_fli + 3 - p.fire_depth));
     sync_fire_controls();
     draw_skewt();
 });
@@ -475,7 +476,7 @@ document.getElementById("fire_width").addEventListener("input", (e) =>
 {
     const p = active_parcel();
     if (!p) return;
-    set_fire(p, p.fire_depth + +e.target.value, fire_H(p));
+    set_fire(p, p.fire_depth + +e.target.value, p.fire_depth, fire_H(p));
     sync_fire_controls();
     draw_skewt();
 });
@@ -486,8 +487,8 @@ document.getElementById("fire_depth").addEventListener("input", (e) =>
     if (!p) return;
     const HD    = fire_H(p) * 10 ** p.fire_depth;
     const log_L = p.fire_area - p.fire_depth;
-    p.fire_depth = +e.target.value;
-    set_fire(p, p.fire_depth + log_L, HD / 10 ** p.fire_depth);
+    const log_D = +e.target.value;
+    set_fire(p, log_D + log_L, log_D, HD / 10 ** log_D);
     sync_fire_controls();
     draw_skewt();
 });
@@ -555,7 +556,7 @@ document.getElementById("sens_download_btn").addEventListener("click", () =>
     download_plume_sensitivity({
         env, base: s, LE_kw,
         key:      document.getElementById("sens_quantity").value,
-        subtitle: `${model} · ${date} ${time} UTC · ${lat}, ${lon}`,
+        subtitle: `${model} · ${date} ${time} UTC · ${lat}, ${lon} · front depth ${d3.format(".2~r")(10 ** p.fire_depth)} m`,
     });
 });
 document.getElementById("show_isobars").addEventListener("change", draw_skewt);
@@ -835,12 +836,13 @@ function get_parcel_env()
     };
 }
 
-// Surface base plus a parcel's fire excesses; u_vent is the wind's ventilation of the fire.
+// Surface base plus a parcel's fire excesses; u_vent is the wind's ventilation of the fire,
+// taken across the front's depth (a head fire), so widening the front does not change it.
 function get_surface_state(parcel)
 {
     const base = get_surface_base();
     if (!base) return null;
-    const u_vent = base.wind_speed * H0_PLUME / Math.sqrt(10 ** parcel.fire_area);
+    const u_vent = base.wind_speed * H0_PLUME / 10 ** parcel.fire_depth;
     const w0 = w0_from_dtheta(parcel.dtheta, base.thetav_sfc);
     return { ...base, dtheta: parcel.dtheta, dq: parcel.dq, w0, u_vent };
 }

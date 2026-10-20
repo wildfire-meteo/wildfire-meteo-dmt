@@ -19,8 +19,8 @@ import { A_W, B_W, H0_PLUME } from "./parcel.js";
 
 
 // Ventilated plume base: heat leaves a control volume of height H0 and along-wind depth
-// L = sqrt(area) both upward (w0) and downwind (u_vent = s·H0/L, s the environmental wind
-// speed at H0), so
+// D (the fire front depth) both upward (w0) and downwind (u_vent = s·H0/D, s the
+// environmental wind speed at H0), so
 //
 //     H = ρ·cp·dθ·(w0 + u_vent),    w0² = K·dθ,    K = 3·g·A_W·H0 / (2·θv·(1+B_W)).
 //

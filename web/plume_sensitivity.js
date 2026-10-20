@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-import { calc_parcel_ascent, H0_PLUME } from "./parcel.js";
+import { calc_parcel_ascent } from "./parcel.js";
 import { w0_from_dtheta, dtheta_from_H, dq_from_LE } from "./fire_surface.js";
 
 
@@ -35,16 +35,16 @@ const margin = { top: 64, right: 150, bottom: 60, left: 76 };
 
 
 // Entraining plume for every (H, A) pair; rows follow H_kw, columns log_A.
-// The wind's ventilation depends on fire area, so the fluxes map to dθ, dq per pair.
+// The area varies by front width at the active parcel's depth, so base.u_vent holds.
 function compute(env, base, LE_kw, H_kw, log_A)
 {
     const { z_env, T_env, Td_env, p_env } = env;
     const z_max = z_env[z_env.length - 1];
+    const u_vent = base.u_vent;
 
     return H_kw.map(H => log_A.map(la =>
     {
         const fire_area = 10 ** la;
-        const u_vent = base.wind_speed * H0_PLUME / Math.sqrt(fire_area);
         const dtheta = dtheta_from_H(H * 1e3, base.rho_sfc, base.thetav_sfc, u_vent);
         const dq     = dq_from_LE(LE_kw * 1e3, dtheta, base.rho_sfc, base.thetav_sfc, u_vent);
         const w0     = w0_from_dtheta(dtheta, base.thetav_sfc);
